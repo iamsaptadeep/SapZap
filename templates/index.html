@@ -183,26 +183,46 @@
         </div>
     </footer>
 
-    <script>
-        document.getElementById('downloadForm').addEventListener('submit', async (e) => {
-            e.preventDefault();
-            
-            const url = document.getElementById('urlInput').value;
-            const downloadBtn = document.getElementById('downloadBtn');
-            const resetBtn = document.getElementById('resetBtn');
-            const loading = document.getElementById('loading');
-            const resultDiv = document.getElementById('result');
-            
-            // Show loading, disable buttons
-            downloadBtn.disabled = true;
-            resetBtn.disabled = true;
-            downloadBtn.classList.add('opacity-80', 'cursor-not-allowed');
-            resetBtn.classList.add('opacity-80', 'cursor-not-allowed');
-            loading.classList.remove('hidden');
-            resultDiv.classList.add('hidden');
-            resultDiv.innerHTML = '';
-            
-            try {
+   <script>
+
+    document.getElementById('downloadForm').addEventListener('submit', async function(e) {
+        e.preventDefault();
+        
+        const url = document.getElementById('urlInput').value;
+        const downloadBtn = document.getElementById('downloadBtn');
+        const resetBtn = document.getElementById('resetBtn');
+        const loading = document.getElementById('loading');
+        const resultDiv = document.getElementById('result');
+        
+        // UI State Management
+        downloadBtn.disabled = true;
+        resetBtn.disabled = true;
+        downloadBtn.classList.add('opacity-80', 'cursor-not-allowed');
+        resetBtn.classList.add('opacity-80', 'cursor-not-allowed');
+        loading.classList.remove('hidden');
+        resultDiv.classList.add('hidden');
+        resultDiv.innerHTML = '';
+        
+        try {
+            // Mobile-friendly download approach
+            if (/Android|iPhone|iPad|iPod/i.test(navigator.userAgent)) {
+                // For mobile devices - use form submission
+                const form = document.createElement('form');
+                form.method = 'POST';
+                form.action = '/download';
+                
+                const input = document.createElement('input');
+                input.type = 'hidden';
+                input.name = 'url';
+                input.value = url;
+                
+                form.appendChild(input);
+                document.body.appendChild(form);
+                form.submit();
+                
+                // Mobile devices will handle the response as download
+            } else {
+                // For desktop - use fetch API with better UI feedback
                 const response = await fetch('/download', {
                     method: 'POST',
                     headers: {
@@ -216,7 +236,6 @@
                     throw new Error(error);
                 }
                 
-                // Create download link
                 const blob = await response.blob();
                 const filename = response.headers.get('Content-Disposition')
                     ? response.headers.get('Content-Disposition').split('filename=')[1].replace(/"/g, '')
@@ -229,8 +248,9 @@
                 document.body.appendChild(a);
                 a.click();
                 a.remove();
+                window.URL.revokeObjectURL(downloadUrl);
                 
-                // Extract resolution from filename
+                // Show success message only on desktop
                 const resolutionMatch = filename.match(/_(\d+p)\./);
                 const resolution = resolutionMatch ? resolutionMatch[1] : 'HD';
                 
@@ -250,37 +270,39 @@
                         <i class="fas fa-redo mr-2"></i>Download Another
                     </button>
                 `;
-                
-            } catch (error) {
-                let errorMsg = error.message;
-                if (errorMsg.includes('Instagram')) {
-                    errorMsg = "Instagram download failed. The reel might be private or restricted.";
-                }
-                else if (errorMsg.includes('unavailable')) {
-                    errorMsg = "Video format unavailable. Try a different video.";
-                }
-                else if (errorMsg.includes('Private video')) {
-                    errorMsg = "Cannot download private videos.";
-                }
-                else if (errorMsg.includes('No formats found')) {
-                    errorMsg = "No downloadable formats found. Video may be restricted.";
-                }
-                
-                resultDiv.innerHTML = `
-                    <div class="text-red-400 text-4xl mb-3">
-                        <i class="fas fa-exclamation-triangle"></i>
-                    </div>
-                    <p class="font-bold text-lg text-red-400">Download Failed</p>
-                    <p class="font-medium mt-2">${errorMsg}</p>
-                    <p class="text-sm mt-3 text-gray-400">Please check the URL and try again</p>
-                    <button 
-                        onclick="document.getElementById('resetBtn').click()"
-                        class="reset-btn mt-4 text-gray-300 px-4 py-2 rounded-lg"
-                    >
-                        <i class="fas fa-redo mr-2"></i>Try Again
-                    </button>
-                `;
-            } finally {
+            }
+        } catch (error) {
+            let errorMsg = error.message;
+            if (errorMsg.includes('Instagram')) {
+                errorMsg = "Instagram download failed. The reel might be private or restricted.";
+            }
+            else if (errorMsg.includes('unavailable')) {
+                errorMsg = "Video format unavailable. Try a different video.";
+            }
+            else if (errorMsg.includes('Private video')) {
+                errorMsg = "Cannot download private videos.";
+            }
+            else if (errorMsg.includes('No formats found')) {
+                errorMsg = "No downloadable formats found. Video may be restricted.";
+            }
+            
+            resultDiv.innerHTML = `
+                <div class="text-red-400 text-4xl mb-3">
+                    <i class="fas fa-exclamation-triangle"></i>
+                </div>
+                <p class="font-bold text-lg text-red-400">Download Failed</p>
+                <p class="font-medium mt-2">${errorMsg}</p>
+                <p class="text-sm mt-3 text-gray-400">Please check the URL and try again</p>
+                <button 
+                    onclick="document.getElementById('resetBtn').click()"
+                    class="reset-btn mt-4 text-gray-300 px-4 py-2 rounded-lg"
+                >
+                    <i class="fas fa-redo mr-2"></i>Try Again
+                </button>
+            `;
+        } finally {
+            // Only reset UI if not on mobile (mobile will reload the page)
+            if (!/Android|iPhone|iPad|iPod/i.test(navigator.userAgent)) {
                 loading.classList.add('hidden');
                 downloadBtn.disabled = false;
                 resetBtn.disabled = false;
@@ -288,15 +310,17 @@
                 resetBtn.classList.remove('opacity-80', 'cursor-not-allowed');
                 resultDiv.classList.remove('hidden');
             }
-        });
-        
-        // Reset button functionality
-        document.getElementById('resetBtn').addEventListener('click', () => {
-            document.getElementById('urlInput').value = '';
-            document.getElementById('result').classList.add('hidden');
-            document.getElementById('result').innerHTML = '';
-            document.getElementById('urlInput').focus();
-        });
-    </script>
+        }
+    });
+    
+    // Reset button functionality
+    document.getElementById('resetBtn').addEventListener('click', function() {
+        document.getElementById('urlInput').value = '';
+        document.getElementById('result').classList.add('hidden');
+        document.getElementById('result').innerHTML = '';
+        document.getElementById('urlInput').focus();
+    });
+</script>
 </body>
 </html>
+

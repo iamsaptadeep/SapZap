@@ -5,7 +5,7 @@ import tempfile
 import time
 import shutil
 import logging
-from flask import Flask, request, send_file, render_template
+from flask import Flask, request, render_template, Response
 import yt_dlp
 
 app = Flask(__name__)
@@ -100,26 +100,15 @@ def download_media(url):
             
             # Create final filename
             title = info.get('title', 'video')
-            new_filename = clean_filename(title, resolution)
+            filename = clean_filename(title, resolution)
             
-            # Create a new temporary file with the final filename
-            final_file = tempfile.NamedTemporaryFile(delete=False, suffix='.mp4')
-            final_file_path = final_file.name
-            final_file.close()
-            
-            # Move the downloaded file to the final temporary location
-            shutil.move(file_path, final_file_path)
-            
-            return final_file_path, new_filename, temp_dir
+            return file_path, filename, temp_dir
     
-    finally:
-        # Clean up cookies file
-        if cookies_file and os.path.exists(cookies_file):
-            os.unlink(cookies_file)
-        
-        # Clean up temporary directory immediately
-        if os.path.exists(temp_dir):
+    except Exception as e:
+        # Clean up if error occurs
+        if temp_dir and os.path.exists(temp_dir):
             shutil.rmtree(temp_dir, ignore_errors=True)
+        raise e
 
 @app.route('/')
 def index():
@@ -134,29 +123,26 @@ def download():
     try:
         file_path, filename, temp_dir = download_media(url)
         
-        # Send file and schedule cleanup
-        response = send_file(
-            file_path,
-            as_attachment=True,
-            download_name=filename
+        # Create a streaming response
+        def generate():
+            with open(file_path, 'rb') as f:
+                while chunk := f.read(1024 * 1024):  # 1MB chunks
+                    yield chunk
+            # Cleanup after streaming completes
+            if os.path.exists(file_path):
+                os.remove(file_path)
+            if os.path.exists(temp_dir):
+                shutil.rmtree(temp_dir, ignore_errors=True)
+        
+        response = Response(
+            generate(),
+            mimetype='video/mp4',
+            headers={
+                'Content-Disposition': f'attachment; filename="{filename}"',
+                'Content-Type': 'video/mp4'
+            }
         )
         
-        # Cleanup file after sending
-        def cleanup():
-            attempts = 0
-            while attempts < 5:
-                try:
-                    if os.path.exists(file_path):
-                        os.remove(file_path)
-                    if os.path.exists(temp_dir):
-                        shutil.rmtree(temp_dir, ignore_errors=True)
-                    break
-                except Exception as e:
-                    logger.error(f"Cleanup attempt {attempts+1}: {str(e)}")
-                    time.sleep(0.5)
-                attempts += 1
-        
-        response.call_on_close(cleanup)
         return response
     
     except Exception as e:
