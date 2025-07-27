@@ -29,6 +29,32 @@ def install_po_token_plugin():
             logger.warning(f"⚠️ Could not install PO Token plugin: {e}")
             return False
 
+def create_base_ydl_opts(temp_dir, headers, cookies_file=None):
+    """Create base yt-dlp options without PO Token plugin."""
+    opts = {
+        'outtmpl': f'{temp_dir}/%(title)s.%(ext)s',
+        'quiet': False,
+        'no_warnings': False,
+        'noplaylist': True,
+        'retries': 3,
+        'fragment_retries': 3,
+        'skip_unavailable_fragments': True,
+        'windowsfilenames': True,
+        'logger': logger,
+        'noprogress': True,
+        'http_headers': headers,
+        'nocheckcertificate': True,
+        'sleep_interval': random.uniform(1, 3),
+        'max_sleep_interval': 5,
+        'geo_bypass': True,
+        'geo_bypass_country': 'US',
+    }
+    
+    if cookies_file:
+        opts['cookiefile'] = cookies_file
+        
+    return opts
+
 app = Flask(__name__)
 
 # Configure logging
@@ -53,6 +79,8 @@ YOUTUBE_COOKIES = {
     'SID': 'g.a000zgjGCJyQc0bL3wr4HGWnrL21w6Ati0aw0DYAOoHZ7QeSGe0vFj0ULa7Q47NHAJMVtEuqrAACgYKAZoSARcSFQHGX2Mi8QVOYvhY5vlwv1rhakD57BoVAUF8yKrpj64NGFnVEe2cQDAjtqJE0076',
     'SAPISID': 'XYUczUcvjVY7yZj0/AQGWubmQnegiTQSIN',
 }
+
+
 
 
 # Regex to find video IDs from all common YouTube URL formats
@@ -149,57 +177,81 @@ def download_media(original_url):
             logger.info("YouTube video URL detected.")
             url = normalized_url
             
-            # Enhanced YouTube-specific configuration with PO Token workarounds
-            ydl_opts.update({
-                'http_headers': {
-                    **headers,
-                    'Referer': 'https://www.youtube.com/',
-                    'Origin': 'https://www.youtube.com',
-                    'X-YouTube-Client-Name': '1',
-                    'X-YouTube-Client-Version': '2.20250101.01.00',
-                },
-                'extractor_args': {
-                    'youtube': {
-                        # Try multiple clients, prioritizing those that work without PO tokens
-                        'player_client': ['mediaconnect', 'web', 'ios', 'android'],
-                        'player_skip': ['webpage'],
-                        'lang': ['en'],
-                        # Enable missing PO token formats as fallback
-                        'formats': ['missing_pot'],
-                        # Skip clients that require PO tokens if not available
-                        'skip_dash_manifest': False,
+            # First try with PO Token plugin enabled
+            try:
+                # Enhanced YouTube-specific configuration with PO Token workarounds
+                ydl_opts.update({
+                    'http_headers': {
+                        **headers,
+                        'Referer': 'https://www.youtube.com/',
+                        'Origin': 'https://www.youtube.com',
+                        'X-YouTube-Client-Name': '1',
+                        'X-YouTube-Client-Version': '2.20250101.01.00',
+                    },
+                    'extractor_args': {
+                        'youtube': {
+                            # Try multiple clients, prioritizing those that work without PO tokens
+                            'player_client': ['mediaconnect', 'web', 'ios', 'android'],
+                            'player_skip': ['webpage'],
+                            'lang': ['en'],
+                            # Enable missing PO token formats as fallback
+                            'formats': ['missing_pot'],
+                            # Skip clients that require PO tokens if not available
+                            'skip_dash_manifest': False,
+                        }
                     }
-                }
-            })
-            
-            # Advanced format selection with PO Token bypass strategies
-            if is_shorts:
-                logger.info("YouTube Shorts detected - using PO Token bypass strategy")
-                # Try multiple format combinations for Shorts
-                ydl_opts['format'] = (
-                    # First try: Best quality without PO token requirements
-                    'bestvideo[height<=2160][ext=mp4][protocol^=https]+bestaudio[ext=m4a][protocol^=https]/'
-                    # Fallback to single format files
-                    'best[ext=mp4][height<=2160][protocol^=https]/'
-                    'best[ext=mp4][height<=1440][protocol^=https]/'
-                    'best[ext=mp4][height<=1080][protocol^=https]/'
-                    'best[ext=mp4][height<=720][protocol^=https]/'
-                    # Final fallback to any available format
-                    'best[ext=mp4]/best'
-                )
-            else:
-                logger.info("YouTube video detected - using multi-client strategy")
-                # For regular videos, try various quality levels with fallbacks
-                ydl_opts['format'] = (
-                    # Try to get 1080p without PO tokens
-                    'bestvideo[height<=1080][ext=mp4][protocol^=https]+bestaudio[ext=m4a][protocol^=https]/'
-                    # Single file fallbacks
-                    'best[ext=mp4][height<=1080][protocol^=https]/'
-                    'best[ext=mp4][height<=720][protocol^=https]/'
-                    'bestvideo[height<=720][ext=mp4][protocol^=https]+bestaudio[ext=m4a][protocol^=https]/'
-                    # Accept any mp4 format as final fallback
-                    'best[ext=mp4]/best'
-                )
+                })
+                
+                # Advanced format selection with PO Token bypass strategies
+                if is_shorts:
+                    logger.info("YouTube Shorts detected - using PO Token bypass strategy")
+                    # Try multiple format combinations for Shorts
+                    ydl_opts['format'] = (
+                        # First try: Best quality without PO token requirements
+                        'bestvideo[height<=2160][ext=mp4][protocol^=https]+bestaudio[ext=m4a][protocol^=https]/'
+                        # Fallback to single format files
+                        'best[ext=mp4][height<=2160][protocol^=https]/'
+                        'best[ext=mp4][height<=1440][protocol^=https]/'
+                        'best[ext=mp4][height<=1080][protocol^=https]/'
+                        'best[ext=mp4][height<=720][protocol^=https]/'
+                        # Final fallback to any available format
+                        'best[ext=mp4]/best'
+                    )
+                else:
+                    logger.info("YouTube video detected - using multi-client strategy")
+                    # For regular videos, try various quality levels with fallbacks
+                    ydl_opts['format'] = (
+                        # Try to get 1080p without PO tokens
+                        'bestvideo[height<=1080][ext=mp4][protocol^=https]+bestaudio[ext=m4a][protocol^=https]/'
+                        # Single file fallbacks
+                        'best[ext=mp4][height<=1080][protocol^=https]/'
+                        'best[ext=mp4][height<=720][protocol^=https]/'
+                        'bestvideo[height<=720][ext=mp4][protocol^=https]+bestaudio[ext=m4a][protocol^=https]/'
+                        # Accept any mp4 format as final fallback
+                        'best[ext=mp4]/best'
+                    )
+                
+            except Exception as e:
+                logger.warning(f"PO Token plugin configuration failed: {e}")
+                # Fall back to basic configuration
+                ydl_opts.update({
+                    'http_headers': {
+                        **headers,
+                        'Referer': 'https://www.youtube.com/',
+                    },
+                    'extractor_args': {
+                        'youtube': {
+                            'player_client': ['ios', 'web'],
+                            'lang': ['en'],
+                        }
+                    }
+                })
+                
+                # Simplified format selection
+                if is_shorts:
+                    ydl_opts['format'] = 'best[height<=2160]/best[height<=1440]/best'
+                else:
+                    ydl_opts['format'] = 'best[height<=1080]/best[height<=720]/best'
             
             # Use cookies if available to avoid bot detection
             if YOUTUBE_COOKIES:
@@ -222,6 +274,7 @@ def download_media(original_url):
         # Perform the download with multiple attempts using different strategies
         max_attempts = 3
         last_error = None
+        info = None  # Initialize info variable
         
         for attempt in range(max_attempts):
             try:
@@ -229,20 +282,57 @@ def download_media(original_url):
                 
                 # Modify strategy based on attempt number
                 if attempt == 1:
-                    # Second attempt: Force web client only
+                    # Second attempt: Force web client only and disable PO Token plugin
                     if 'extractor_args' in ydl_opts:
                         ydl_opts['extractor_args']['youtube']['player_client'] = ['web']
-                        logger.info("Retry with web client only")
+                        # Remove PO Token plugin to avoid JSON errors
+                        ydl_opts['extractor_args']['youtube'].pop('formats', None)
+                        logger.info("Retry with web client only, PO Token plugin disabled")
                 elif attempt == 2:
-                    # Third attempt: Use iOS client which often bypasses restrictions
-                    if 'extractor_args' in ydl_opts:
-                        ydl_opts['extractor_args']['youtube']['player_client'] = ['ios']
-                        # iOS client format selection
+                    # Third attempt: Use standard yt-dlp without PO Token plugin
+                    # Remove PO Token plugin completely for this attempt
+                    try:
+                        # Temporarily disable the plugin by creating fresh ydl_opts
+                        fallback_opts = {
+                            'outtmpl': f'{temp_dir}/%(title)s.%(ext)s',
+                            'quiet': False,
+                            'no_warnings': False,
+                            'noplaylist': True,
+                            'retries': 1,
+                            'fragment_retries': 1,
+                            'skip_unavailable_fragments': True,
+                            'windowsfilenames': True,
+                            'logger': logger,
+                            'noprogress': True,
+                            'http_headers': headers,
+                            'nocheckcertificate': True,
+                            'sleep_interval': 1,
+                            'max_sleep_interval': 3,
+                            'geo_bypass': True,
+                            'geo_bypass_country': 'US',
+                            'extractor_args': {
+                                'youtube': {
+                                    'player_client': ['ios'],
+                                    'player_skip': ['webpage'],
+                                    'lang': ['en'],
+                                }
+                            }
+                        }
+                        
+                        # Use simplified format selection for iOS client
                         if is_shorts:
-                            ydl_opts['format'] = 'best[height<=2160]/best[height<=1440]/best'
+                            fallback_opts['format'] = 'best[height<=2160]/best[height<=1440]/best[height<=1080]/best'
                         else:
-                            ydl_opts['format'] = 'best[height<=1080]/best[height<=720]/best'
-                        logger.info("Retry with iOS client and simplified format selection")
+                            fallback_opts['format'] = 'best[height<=1080]/best[height<=720]/best'
+                        
+                        # Add cookies if available
+                        if cookies_file:
+                            fallback_opts['cookiefile'] = cookies_file
+                            
+                        logger.info("Retry with iOS client and standard yt-dlp (no PO Token plugin)")
+                        ydl_opts = fallback_opts
+                    except Exception as e:
+                        logger.warning(f"Failed to create fallback options: {e}")
                 
                 with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                     info = ydl.extract_info(url, download=True)
@@ -262,6 +352,8 @@ def download_media(original_url):
                             "YouTube detected automated access after multiple attempts. "
                             "Please try again later or configure YouTube cookies for authentication."
                         )
+                elif 'json' in error_msg or 'player response' in error_msg:
+                    logger.warning("JSON parsing error - likely PO Token plugin issue")
                 
                 # Add delay between attempts
                 if attempt < max_attempts - 1:
@@ -278,8 +370,12 @@ def download_media(original_url):
                 # Short delay before retry
                 time.sleep(1)
         
-        if last_error and not info:
-            raise last_error
+        # Check if we got valid info
+        if not info:
+            if last_error:
+                raise last_error
+            else:
+                raise RuntimeError("All download attempts failed without extracting video info")
 
         # Find downloaded file
         files = [f for f in os.listdir(temp_dir) if f.lower().endswith(('.mp4', '.mkv', '.webm'))]
