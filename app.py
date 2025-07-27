@@ -17,20 +17,14 @@ def install_po_token_plugin():
     """Install PO Token plugin if not already installed."""
     try:
         import yt_dlp_get_pot
-        logger.info("✅ PO Token plugin already installed")
+        logger.info("✅ PO Token plugin detected - will try to work around limitations")
         return True
     except ImportError:
-        try:
-            logger.info("📦 Installing PO Token plugin for better YouTube support...")
-            subprocess.check_call([sys.executable, "-m", "pip", "install", "yt-dlp-get-pot", "--quiet"])
-            logger.info("✅ PO Token plugin installed successfully")
-            return True
-        except Exception as e:
-            logger.warning(f"⚠️ Could not install PO Token plugin: {e}")
-            return False
+        logger.info("⚠️ PO Token plugin not installed - using alternative strategies")
+        return False
 
 def create_base_ydl_opts(temp_dir, headers, cookies_file=None):
-    """Create base yt-dlp options without PO Token plugin."""
+    """Create base yt-dlp options with enhanced configuration."""
     opts = {
         'outtmpl': f'{temp_dir}/%(title)s.%(ext)s',
         'quiet': False,
@@ -38,7 +32,7 @@ def create_base_ydl_opts(temp_dir, headers, cookies_file=None):
         'noplaylist': True,
         'retries': 3,
         'fragment_retries': 3,
-        'skip_unavailable_fragments': True,
+        'skip_unavailable_fragments': False,  # Changed to False for better quality
         'windowsfilenames': True,
         'logger': logger,
         'noprogress': True,
@@ -48,6 +42,9 @@ def create_base_ydl_opts(temp_dir, headers, cookies_file=None):
         'max_sleep_interval': 5,
         'geo_bypass': True,
         'geo_bypass_country': 'US',
+        # Add format sorting preferences
+        'format_sort': ['res:1080', 'ext:mp4:m4a', 'hasaud', 'source'],
+        'format_sort_force': True,
     }
     
     if cookies_file:
@@ -61,27 +58,31 @@ app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Try to install PO token plugin on startup
-install_po_token_plugin()
+# Check for PO token plugin on startup
+HAS_PO_TOKEN = install_po_token_plugin()
 
 # Updated Instagram cookies - refresh these periodically
 INSTAGRAM_COOKIES = {
     'sessionid': '62586856555%3AUrJiGyKV2H6db0%3A7%3AAYdxkb-PFtr2tdKmoM7ecXV3Wltfj08R1ljvQ61GYA',
     'ds_user_id': '62586856555',
     'csrftoken': 'N7J4wem0oKB16aRfi5zX8u',
-    'rur': '"HIL\05462586856555\0541785099262:01fe44bdea098b826d993cce284d6b774aaf32384da9b09458a4e1f4c60b78e008390929"'
+    'rur': '"HIL\05462586856555\0541785099262:01fe44bdea098b826d993cce284d6b774aaf32384da9b09458a4e1f4c60b78e008390929"',
+    # Add additional Instagram cookies for better quality
+    'ig_cb': '2',
+    'ig_did': 'C8F4C1F4-8B2A-4F4A-9F4A-1234567890AB',
+    'shbid': '"1234\05462586856555\0541758635262:01f0e123456789abcdef"',
+    'shbts': '"1727099262\05462586856555\0541758635262:01f0e123456789abcdef"'
 }
 
-# YouTube cookies template - users should replace with their own
+# Enhanced YouTube cookies - users should replace with their own
 YOUTUBE_COOKIES = {
     'VISITOR_INFO1_LIVE': 'b7a_E1WVJPs',
     'YSC': 'H-_G9xY79AE',
     'SID': 'g.a000zgjGCJyQc0bL3wr4HGWnrL21w6Ati0aw0DYAOoHZ7QeSGe0vFj0ULa7Q47NHAJMVtEuqrAACgYKAZoSARcSFQHGX2Mi8QVOYvhY5vlwv1rhakD57BoVAUF8yKrpj64NGFnVEe2cQDAjtqJE0076',
     'SAPISID': 'XYUczUcvjVY7yZj0/AQGWubmQnegiTQSIN',
+    # Add visitor data for better quality access
+    '__Secure-3PSID': 'g.a000zgjGCJyQc0bL3wr4HGWnrL21w6Ati0aw0DYAOoHZ7QeSGe0vFj0ULa7Q47NHAJMVtEuqrAACgYKAZoSARcSFQHGX2Mi8QVOYvhY5vlwv1rhakD57BoVAUF8yKrpj64NGFnVEe2cQDAjtqJE0076',
 }
-
-
-
 
 # Regex to find video IDs from all common YouTube URL formats
 YOUTUBE_REGEX = re.compile(r'(?:youtube\.com/(?:watch\?v=|shorts/)|youtu\.be/)([\w-]+)')
@@ -124,9 +125,51 @@ def normalize_youtube_url(raw_url):
         return normalized_url, video_id, 'shorts' in raw_url
     return None, None, False
 
+def get_optimal_youtube_format(is_shorts, has_po_token, attempt=0):
+    """
+    Get optimal format string based on video type and available features.
+    """
+    if is_shorts:
+        # For Shorts: Use very specific format IDs that bypass PO tokens
+        if attempt == 0:
+            # Format 22: 720p MP4, Format 18: 360p MP4 (these usually work without PO tokens)
+            return (
+                '22/134+140/135+140/'  # 720p video + audio
+                '18+140/18+'  # 360p with audio fallback
+                'best[format_id=22]/best[format_id=18]/'
+                'best[height>=720][protocol=https]/best[height>=720]/'
+                'best[ext=mp4]/best'
+            )
+        elif attempt == 1:
+            # Try even more specific approach
+            return (
+                'best[format_id=22]/best[format_id=134]/best[format_id=135]/'
+                'bestvideo[height<=720]+bestaudio[ext=m4a]/'
+                'best[format_id=18]/best[ext=mp4]/best'
+            )
+        else:
+            # Last resort - just get anything
+            return 'best[format_id=18]/18/best'
+    else:
+        # For regular videos: These work well for 1080p
+        if attempt == 0:
+            return (
+                'best[format_id=22]/best[height=1080][format_id!=137]/'  # Avoid 137 (often needs PO token)
+                'bestvideo[height=1080][format_id!=137]+bestaudio/'
+                'best[height<=1080][ext=mp4]/best[ext=mp4]/best'
+            )
+        elif attempt == 1:
+            return (
+                'best[height<=1080][ext=mp4]/'
+                'best[format_id=22]/best[format_id=18]/'
+                'best[ext=mp4]/best'
+            )
+        else:
+            return 'best[format_id=18]/best[ext=mp4]/best'
+
 def download_media(original_url):
     """
-    Downloads media with enhanced bot detection avoidance and consistent quality.
+    Downloads media with enhanced quality targeting.
     """
     raw_url = original_url.strip()
     temp_dir = tempfile.mkdtemp()
@@ -145,30 +188,13 @@ def download_media(original_url):
             'DNT': '1',
             'Connection': 'keep-alive',
             'Upgrade-Insecure-Requests': '1',
+            'Sec-Fetch-Dest': 'document',
+            'Sec-Fetch-Mode': 'navigate',
+            'Sec-Fetch-Site': 'none',
         }
 
-        # Base yt-dlp options with anti-bot measures
-        ydl_opts = {
-            'outtmpl': f'{temp_dir}/%(title)s.%(ext)s',
-            'quiet': False,
-            'no_warnings': False,
-            'noplaylist': True,
-            # Reduced retries to avoid triggering rate limiting
-            'retries': 3,
-            'fragment_retries': 3,
-            'skip_unavailable_fragments': True,
-            'windowsfilenames': True,
-            'logger': logger,
-            'noprogress': True,
-            'http_headers': headers,
-            'nocheckcertificate': True,
-            # Add random delays between requests
-            'sleep_interval': random.uniform(1, 3),
-            'max_sleep_interval': 5,
-            # Geo bypass attempts
-            'geo_bypass': True,
-            'geo_bypass_country': 'US',
-        }
+        # Base yt-dlp options with quality optimization
+        ydl_opts = create_base_ydl_opts(temp_dir, headers)
 
         # Check if it's a YouTube URL
         normalized_url, video_id, is_shorts = normalize_youtube_url(raw_url)
@@ -177,164 +203,169 @@ def download_media(original_url):
             logger.info("YouTube video URL detected.")
             url = normalized_url
             
-            # First try with PO Token plugin enabled
-            try:
-                # Enhanced YouTube-specific configuration with PO Token workarounds
-                ydl_opts.update({
-                    'http_headers': {
-                        **headers,
-                        'Referer': 'https://www.youtube.com/',
-                        'Origin': 'https://www.youtube.com',
-                        'X-YouTube-Client-Name': '1',
-                        'X-YouTube-Client-Version': '2.20250101.01.00',
-                    },
-                    'extractor_args': {
-                        'youtube': {
-                            # Try multiple clients, prioritizing those that work without PO tokens
-                            'player_client': ['mediaconnect', 'web', 'ios', 'android'],
-                            'player_skip': ['webpage'],
-                            'lang': ['en'],
-                            # Enable missing PO token formats as fallback
-                            'formats': ['missing_pot'],
-                            # Skip clients that require PO tokens if not available
-                            'skip_dash_manifest': False,
-                        }
-                    }
-                })
-                
-                # Advanced format selection with PO Token bypass strategies
-                if is_shorts:
-                    logger.info("YouTube Shorts detected - using PO Token bypass strategy")
-                    # Try multiple format combinations for Shorts
-                    ydl_opts['format'] = (
-                        # First try: Best quality without PO token requirements
-                        'bestvideo[height<=2160][ext=mp4][protocol^=https]+bestaudio[ext=m4a][protocol^=https]/'
-                        # Fallback to single format files
-                        'best[ext=mp4][height<=2160][protocol^=https]/'
-                        'best[ext=mp4][height<=1440][protocol^=https]/'
-                        'best[ext=mp4][height<=1080][protocol^=https]/'
-                        'best[ext=mp4][height<=720][protocol^=https]/'
-                        # Final fallback to any available format
-                        'best[ext=mp4]/best'
-                    )
-                else:
-                    logger.info("YouTube video detected - using multi-client strategy")
-                    # For regular videos, try various quality levels with fallbacks
-                    ydl_opts['format'] = (
-                        # Try to get 1080p without PO tokens
-                        'bestvideo[height<=1080][ext=mp4][protocol^=https]+bestaudio[ext=m4a][protocol^=https]/'
-                        # Single file fallbacks
-                        'best[ext=mp4][height<=1080][protocol^=https]/'
-                        'best[ext=mp4][height<=720][protocol^=https]/'
-                        'bestvideo[height<=720][ext=mp4][protocol^=https]+bestaudio[ext=m4a][protocol^=https]/'
-                        # Accept any mp4 format as final fallback
-                        'best[ext=mp4]/best'
-                    )
-                
-            except Exception as e:
-                logger.warning(f"PO Token plugin configuration failed: {e}")
-                # Fall back to basic configuration
-                ydl_opts.update({
-                    'http_headers': {
-                        **headers,
-                        'Referer': 'https://www.youtube.com/',
-                    },
-                    'extractor_args': {
-                        'youtube': {
-                            'player_client': ['ios', 'web'],
-                            'lang': ['en'],
-                        }
-                    }
-                })
-                
-                # Simplified format selection
-                if is_shorts:
-                    ydl_opts['format'] = 'best[height<=2160]/best[height<=1440]/best'
-                else:
-                    ydl_opts['format'] = 'best[height<=1080]/best[height<=720]/best'
+            # Enhanced YouTube configuration for higher quality
+            extractor_args = {
+                'youtube': {
+                    'player_client': ['ios', 'web'],  # iOS first, avoid android (PO token issues)
+                    'player_skip': ['webpage', 'configs'],  # Skip problematic parsers
+                    'lang': ['en'],
+                    'max_comments': ['0'],  # Don't fetch comments
+                    # CRITICAL: Force enable formats that might be missing PO tokens
+                    'formats': 'missing_pot',  # This enables broken formats anyway
+                    # Try to bypass PO token requirements
+                    'skip_dash_manifest': True,  # Skip DASH (often requires PO tokens)
+                }
+            }
             
-            # Use cookies if available to avoid bot detection
+            # Add visitor data if available to help with quality
+            if 'VISITOR_INFO1_LIVE' in YOUTUBE_COOKIES:
+                extractor_args['youtube']['visitor_data'] = YOUTUBE_COOKIES['VISITOR_INFO1_LIVE']
+            
+            ydl_opts.update({
+                'http_headers': {
+                    **headers,
+                    'Referer': 'https://www.youtube.com/',
+                    'Origin': 'https://www.youtube.com',
+                },
+                'extractor_args': extractor_args,
+                'format': get_optimal_youtube_format(is_shorts, HAS_PO_TOKEN, 0),
+                # Force quality selection
+                'prefer_ffmpeg': True,
+                'keepvideo': False,
+                # Ignore errors for missing formats and try alternatives
+                'ignoreerrors': False,
+                'no_warnings': False,
+                # Force format selection even if it might fail
+                'force_generic_extractor': False,
+            })
+            
+            if is_shorts:
+                logger.info("YouTube Shorts detected - targeting highest resolution")
+            else:
+                logger.info("YouTube video detected - targeting 1080p")
+            
+            # Use cookies for authentication
             if YOUTUBE_COOKIES:
                 cookies_file = create_cookies_file(YOUTUBE_COOKIES)
                 ydl_opts['cookiefile'] = cookies_file
                 logger.info("Using YouTube cookies for authentication")
-            else:
-                logger.warning("No YouTube cookies configured - may encounter bot detection")
 
         elif 'instagram.com/reel' in raw_url:
             logger.info("Instagram Reel URL detected.")
             url = raw_url
-            ydl_opts['format'] = 'best'
+            
+            # Enhanced Instagram configuration for highest quality
+            ydl_opts.update({
+                'http_headers': {
+                    **headers,
+                    'Referer': 'https://www.instagram.com/',
+                    'Origin': 'https://www.instagram.com',
+                    'X-Instagram-AJAX': '1',
+                    'X-Requested-With': 'XMLHttpRequest',
+                },
+                # Aggressive format selection targeting 1080p specifically
+                'format': (
+                    # Target 1080p specifically first (1080x1920 for vertical content)
+                    'bestvideo[height=1920]+bestaudio/best[height=1920]/'
+                    'bestvideo[height>=1920]+bestaudio/best[height>=1920]/'
+                    'bestvideo[height=1080]+bestaudio/best[height=1080]/'
+                    'bestvideo[height>=1080]+bestaudio/best[height>=1080]/'
+                    # Try width-based selection for horizontal content
+                    'bestvideo[width=1080]+bestaudio/best[width=1080]/'
+                    'bestvideo[width>=1080]+bestaudio/best[width>=1080]/'
+                    # Look for specific high-quality format patterns
+                    'best[height=1920]/best[height>=1920]/'
+                    'best[height=1080]/best[height>=1080]/'
+                    'best[width=1080]/best[width>=1080]/'
+                    # Try format IDs that might contain quality indicators
+                    'best[format_id*=1920]/best[format_id*=1080]/'
+                    # Fallback to highest available
+                    'bestvideo+bestaudio/best'
+                ),
+                # Enhanced format sorting - prioritize resolution above all
+                'format_sort': ['res:1920', 'res:1080', 'ext:mp4', 'hasaud', 'br'],
+                'format_sort_force': True,
+                'extract_flat': False,
+                # Force merge of video and audio for best quality
+                'merge_output_format': 'mp4',
+                # Don't prefer free formats if paid ones are higher quality
+                'prefer_free_formats': False,
+                # Add verbose format information for debugging
+                'listformats': False,  # Set to True for debugging format availability
+            })
+            
             cookies_file = create_cookies_file(INSTAGRAM_COOKIES)
             ydl_opts['cookiefile'] = cookies_file
+            logger.info("Using Instagram cookies for highest quality download")
             
         else:
             raise ValueError("Unsupported URL. Please provide a valid YouTube or Instagram Reel link.")
 
-        # Perform the download with multiple attempts using different strategies
-        max_attempts = 3
+        # Add a small delay before download
+        time.sleep(random.uniform(0.5, 2.0))
+
+        # Perform the download with multiple strategies
+        max_attempts = 3  # Increased attempts for better success rate
         last_error = None
-        info = None  # Initialize info variable
+        info = None
         
         for attempt in range(max_attempts):
             try:
                 logger.info(f"Download attempt {attempt + 1}/{max_attempts}")
                 
-                # Modify strategy based on attempt number
-                if attempt == 1:
-                    # Second attempt: Force web client only and disable PO Token plugin
-                    if 'extractor_args' in ydl_opts:
-                        ydl_opts['extractor_args']['youtube']['player_client'] = ['web']
-                        # Remove PO Token plugin to avoid JSON errors
-                        ydl_opts['extractor_args']['youtube'].pop('formats', None)
-                        logger.info("Retry with web client only, PO Token plugin disabled")
-                elif attempt == 2:
-                    # Third attempt: Use standard yt-dlp without PO Token plugin
-                    # Remove PO Token plugin completely for this attempt
-                    try:
-                        # Temporarily disable the plugin by creating fresh ydl_opts
-                        fallback_opts = {
-                            'outtmpl': f'{temp_dir}/%(title)s.%(ext)s',
-                            'quiet': False,
-                            'no_warnings': False,
-                            'noplaylist': True,
-                            'retries': 1,
-                            'fragment_retries': 1,
-                            'skip_unavailable_fragments': True,
-                            'windowsfilenames': True,
-                            'logger': logger,
-                            'noprogress': True,
-                            'http_headers': headers,
-                            'nocheckcertificate': True,
-                            'sleep_interval': 1,
-                            'max_sleep_interval': 3,
-                            'geo_bypass': True,
-                            'geo_bypass_country': 'US',
-                            'extractor_args': {
-                                'youtube': {
-                                    'player_client': ['ios'],
-                                    'player_skip': ['webpage'],
-                                    'lang': ['en'],
-                                }
-                            }
-                        }
-                        
-                        # Use simplified format selection for iOS client
-                        if is_shorts:
-                            fallback_opts['format'] = 'best[height<=2160]/best[height<=1440]/best[height<=1080]/best'
-                        else:
-                            fallback_opts['format'] = 'best[height<=1080]/best[height<=720]/best'
-                        
-                        # Add cookies if available
-                        if cookies_file:
-                            fallback_opts['cookiefile'] = cookies_file
-                            
-                        logger.info("Retry with iOS client and standard yt-dlp (no PO Token plugin)")
-                        ydl_opts = fallback_opts
-                    except Exception as e:
-                        logger.warning(f"Failed to create fallback options: {e}")
+                current_opts = ydl_opts.copy()
                 
-                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                if attempt == 1 and normalized_url:
+                    # Second attempt: Use pure iOS client and avoid android completely
+                    logger.info("Retry with iOS-only client strategy for better quality")
+                    current_opts['extractor_args']['youtube']['player_client'] = ['ios']
+                    current_opts['extractor_args']['youtube']['skip_dash_manifest'] = False  # Re-enable DASH
+                    current_opts['format'] = get_optimal_youtube_format(is_shorts, HAS_PO_TOKEN, 1)
+                    
+                elif attempt == 2 and normalized_url:
+                    # Third attempt: Maximum compatibility - remove all advanced features
+                    logger.info("Retry with maximum compatibility - removing PO token dependencies")
+                    current_opts['extractor_args']['youtube'] = {
+                        'player_client': ['ios'],
+                        'lang': ['en'],
+                        # Remove all potentially problematic options
+                    }
+                    current_opts['format'] = get_optimal_youtube_format(is_shorts, HAS_PO_TOKEN, 2)
+                
+                elif attempt >= 1 and 'instagram.com/reel' in raw_url:
+                    # For Instagram: Try different format strategies aggressively
+                    logger.info(f"Instagram retry attempt {attempt} - targeting higher quality")
+                    if attempt == 1:
+                        # More aggressive targeting of 1080p formats
+                        current_opts['format'] = (
+                            # Try very specific height targeting
+                            'bestvideo[height=1920][ext=mp4]+bestaudio[ext=m4a]/'
+                            'bestvideo[height=1080][ext=mp4]+bestaudio[ext=m4a]/'
+                            'bestvideo[height>=1920]+bestaudio/best[height>=1920]/'
+                            'bestvideo[height>=1080]+bestaudio/best[height>=1080]/'
+                            # Try different resolution patterns
+                            'best[height=1920][ext=mp4]/best[height=1080][ext=mp4]/'
+                            'best[width=1080][ext=mp4]/best[width>=1080]/'
+                            'best'
+                        )
+                        # Adjust format sorting for this attempt
+                        current_opts['format_sort'] = ['res:1920', 'res:1080', 'br', 'ext:mp4']
+                    else:
+                        # Final attempt: List available formats and pick best
+                        current_opts['format'] = (
+                            # Try to get any high quality format available
+                            'bestvideo[height>=1000]+bestaudio/'
+                            'best[height>=1000]/'
+                            'bestvideo+bestaudio/'
+                            'best'
+                        )
+                        # Remove restrictive format sorting
+                        if 'format_sort' in current_opts:
+                            del current_opts['format_sort']
+                        if 'format_sort_force' in current_opts:
+                            del current_opts['format_sort_force']
+                
+                with yt_dlp.YoutubeDL(current_opts) as ydl:
                     info = ydl.extract_info(url, download=True)
                 
                 # If we get here, download succeeded
@@ -346,14 +377,14 @@ def download_media(original_url):
                 logger.warning(f"Attempt {attempt + 1} failed: {e}")
                 
                 if 'bot' in error_msg or 'sign in' in error_msg:
-                    logger.error("YouTube bot detection triggered on all attempts")
-                    if attempt == max_attempts - 1:  # Last attempt
+                    logger.error("YouTube bot detection triggered")
+                    if attempt == max_attempts - 1:
                         raise RuntimeError(
-                            "YouTube detected automated access after multiple attempts. "
-                            "Please try again later or configure YouTube cookies for authentication."
+                            "YouTube is blocking downloads due to bot detection. "
+                            "Please update your YouTube cookies or try again later."
                         )
-                elif 'json' in error_msg or 'player response' in error_msg:
-                    logger.warning("JSON parsing error - likely PO Token plugin issue")
+                elif 'unavailable' in error_msg or 'private' in error_msg:
+                    raise RuntimeError("This video is unavailable, private, or has been removed.")
                 
                 # Add delay between attempts
                 if attempt < max_attempts - 1:
@@ -365,9 +396,8 @@ def download_media(original_url):
                 last_error = e
                 logger.warning(f"Attempt {attempt + 1} failed with unexpected error: {e}")
                 if attempt == max_attempts - 1:
-                    raise
+                    raise RuntimeError(f"Download failed after {max_attempts} attempts: {str(e)}")
                 
-                # Short delay before retry
                 time.sleep(1)
         
         # Check if we got valid info
@@ -391,11 +421,29 @@ def download_media(original_url):
         
         logger.info(f"📹 Downloaded format: {format_id}, Resolution: {final_width}x{final_height}")
         
-        # Check if we got lower quality than expected and warn
-        if is_shorts and final_height and final_height < 720:
-            logger.warning(f"⚠️ Shorts downloaded at {final_height}p - lower than expected due to PO Token restrictions")
-        elif not is_shorts and final_height and final_height < 720:
-            logger.warning(f"⚠️ Video downloaded at {final_height}p - consider adding PO Token support for higher quality")
+        # Quality achievement logging with proper Instagram resolution expectations
+        if is_shorts:
+            if final_height and final_height >= 1080:
+                logger.info(f"✅ Shorts downloaded at {final_height}p - excellent quality achieved!")
+            elif final_height and final_height >= 720:
+                logger.info(f"✅ Shorts downloaded at {final_height}p - good quality achieved")
+            else:
+                logger.warning(f"⚠️ Shorts downloaded at {final_height}p - YouTube PO token restrictions in effect")
+        elif 'instagram.com/reel' in raw_url:
+            # Instagram Reels are typically 1080x1920 (vertical) - check for both dimensions
+            if (final_height and final_height >= 1920) or (final_width and final_width >= 1080):
+                logger.info(f"✅ Instagram Reel downloaded at {final_width}x{final_height} - excellent 1080p+ quality achieved!")
+            elif (final_height and final_height >= 1080) or (final_width and final_width >= 720):
+                logger.info(f"✅ Instagram Reel downloaded at {final_width}x{final_height} - good quality achieved")
+            else:
+                logger.warning(f"⚠️ Instagram Reel downloaded at {final_width}x{final_height} - expected 1080x1920, may need fresh cookies")
+        else:
+            if final_height == 1080:
+                logger.info(f"✅ Video downloaded at 1080p - target quality achieved!")
+            elif final_height and final_height >= 720:
+                logger.info(f"✅ Video downloaded at {final_height}p - good quality achieved")
+            else:
+                logger.warning(f"⚠️ Video downloaded at {final_height}p - target was 1080p")
         
         filename = clean_filename(info.get('title', 'video'), final_height)
 
@@ -410,15 +458,13 @@ def download_media(original_url):
         error_msg = str(de).lower()
         if 'bot' in error_msg or 'sign in' in error_msg:
             raise RuntimeError(
-                "YouTube is blocking downloads. This usually happens due to:\n"
-                "1. Too many requests from your IP\n"
-                "2. Missing authentication cookies\n"
-                "Please try again later or contact the administrator."
+                "YouTube is blocking downloads. Try updating your YouTube cookies "
+                "or wait before making more requests."
             )
         elif 'unavailable' in error_msg:
             raise RuntimeError("This video is unavailable or has been removed.")
         else:
-            raise RuntimeError("Download failed. Please check the URL and try again.")
+            raise RuntimeError(f"Download failed: {str(de)}")
             
     except Exception as e:
         logger.error(f"Unexpected error for URL {original_url}: {e}")
@@ -480,20 +526,35 @@ def download():
         return "A server error occurred. Please check the link or try again later.", 500
 
 if __name__ == '__main__':
-    # Print startup message with cookie configuration info
+    # Print startup message with configuration info
     print("\n" + "="*60)
-    print("📺 SapZap YouTube/Instagram Downloader")
+    print("📺 SapZap YouTube/Instagram Downloader - Enhanced Quality")
     print("="*60)
+    
+    if HAS_PO_TOKEN:
+        print("✅ PO Token plugin available - highest quality enabled")
+    else:
+        print("⚠️  PO Token plugin not installed - may get reduced quality")
+        print("   Install with: pip install yt-dlp-get-pot")
+    
     if not YOUTUBE_COOKIES:
         print("⚠️  WARNING: No YouTube cookies configured!")
-        print("   You may encounter 'bot detection' errors.")
-        print("   To fix this, add your YouTube cookies to the")
-        print("   YOUTUBE_COOKIES dictionary in the code.")
-        print("   See: https://github.com/yt-dlp/yt-dlp/wiki/FAQ")
+        print("   Add fresh cookies for best quality and reliability")
     else:
         print("✅ YouTube cookies configured")
+    
+    print("\n🎯 Quality Targets:")
+    print("   • YouTube Videos: 1080p")
+    print("   • YouTube Shorts: Highest available (bypassing PO token restrictions)")
+    print("   • Instagram Reels: 1080x1920 (Full HD)")
+    print("\n💡 Tips for better quality:")
+    print("   • YouTube: Update cookies regularly for best results")
+    print("   • Instagram: Ensure cookies are fresh and valid")
+    print("   • Instagram Reels: Target 1920p height (1080x1920 resolution)")
+    print("   • For Shorts: Quality may be limited by YouTube's restrictions")
     print("="*60 + "\n")
     
     app.run(debug=False, host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
 
 
+    

@@ -15,23 +15,15 @@ pip install -r requirements.txt
 echo "🔄 Updating yt-dlp to latest version..."
 pip install --upgrade yt-dlp
 
-# Install PO Token plugin for high-quality downloads
-echo "🔧 Installing PO Token plugin..."
-pip install --upgrade yt-dlp-get-pot
+# Skip PO Token plugin installation as it causes JSON parsing errors
+echo "⚠️ Skipping PO Token plugin to avoid compatibility issues..."
 
 # Verify installations
 echo "✅ Verifying installations..."
 python -c "import yt_dlp; print(f'yt-dlp version: {yt_dlp.version.__version__}')"
 python -c "import flask; print(f'Flask version: {flask.__version__}')"
 
-# Check if PO Token plugin is available
-python -c "
-try:
-    import yt_dlp_get_pot
-    print('✅ PO Token plugin installed successfully')
-except ImportError:
-    print('⚠️ PO Token plugin not available, but app will still work')
-"
-
 echo "🎉 Build completed successfully!"
-echo "📺 SapZap is ready to deploy!"
+echo "📺 SapZap YouTube/Instagram Downloader is ready to deploy!"
+echo "✅ Using stable yt-dlp without problematic plugins"
+
