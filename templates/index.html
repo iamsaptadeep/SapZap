@@ -170,6 +170,34 @@
 
         <!-- Main Content -->
         <main class="px-5 pb-20">
+
+            
+            <!-- Platform Cards -->
+            <div class="grid grid-cols-3 gap-3 mb-8">
+                <div class="platform-card p-5 rounded-lg text-center">
+                    <div class="text-3xl mb-3 text-red-500">
+                        <i class="fab fa-youtube"></i>
+                    </div>
+                    <p class="text-sm font-medium">YouTube</p>
+                    <p class="text-xs text-gray-400 mt-1">1080p Videos</p>
+                </div>
+                <div class="platform-card p-5 rounded-lg text-center">
+                    <div class="text-3xl mb-3 text-blue-400">
+                        <i class="fas fa-mobile-alt"></i>
+                    </div>
+                    <p class="text-sm font-medium">Shorts</p>
+                    <p class="text-xs text-gray-400 mt-1">High Quality</p>
+                </div>
+                <div class="platform-card p-5 rounded-lg text-center">
+                    <div class="text-3xl mb-3 text-purple-500">
+                        <i class="fab fa-instagram"></i>
+                    </div>
+                    <p class="text-sm font-medium">Reels</p>
+                    <p class="text-xs text-gray-400 mt-1">High Quality</p>
+                </div>
+            </div>
+
+            
             <!-- Download Card -->
             <div class="card p-6 mb-6">
                 <form id="downloadForm">
@@ -213,30 +241,6 @@
                 </div>
             </div>
             
-            <!-- Platform Cards -->
-            <div class="grid grid-cols-3 gap-3 mb-8">
-                <div class="platform-card p-5 rounded-lg text-center">
-                    <div class="text-3xl mb-3 text-red-500">
-                        <i class="fab fa-youtube"></i>
-                    </div>
-                    <p class="text-sm font-medium">YouTube</p>
-                    <p class="text-xs text-gray-400 mt-1">1080p Videos</p>
-                </div>
-                <div class="platform-card p-5 rounded-lg text-center">
-                    <div class="text-3xl mb-3 text-blue-400">
-                        <i class="fas fa-mobile-alt"></i>
-                    </div>
-                    <p class="text-sm font-medium">Shorts</p>
-                    <p class="text-xs text-gray-400 mt-1">High Quality</p>
-                </div>
-                <div class="platform-card p-5 rounded-lg text-center">
-                    <div class="text-3xl mb-3 text-purple-500">
-                        <i class="fab fa-instagram"></i>
-                    </div>
-                    <p class="text-sm font-medium">Reels</p>
-                    <p class="text-xs text-gray-400 mt-1">High Quality</p>
-                </div>
-            </div>
             
             <!-- Result Container -->
             <div id="result" class="hidden">
@@ -281,7 +285,6 @@
             document.body.appendChild(form);
             form.submit();
             
-            // Reset UI after 5 seconds (if still visible)
             setTimeout(() => {
                 if (document.body.contains(form)) {
                     document.body.removeChild(form);
@@ -289,7 +292,7 @@
                 downloadBtn.disabled = false;
                 resetBtn.disabled = false;
                 loading.classList.add('hidden');
-            }, 5000);
+            }, 10000);
             
         } catch (error) {
             downloadBtn.disabled = false;
@@ -349,6 +352,8 @@
     </script>
 </body>
 </html>
+
+
 
 
 
