@@ -1,29 +1,20 @@
-#!/usr/bin/env bash
-set -o errexit
+#!/bin/bash
+# build.sh - Setup script for sapzap2
 
-echo "🚀 Starting SapZap Build Process..."
+echo "Setting up environment for sapzap2"
 
-# Upgrade pip
-echo "📦 Upgrading pip..."
-python -m pip install --upgrade pip
+# Create virtual environment
+python -m venv venv
+source venv/bin/activate
 
-# Install Python dependencies
-echo "📦 Installing Python dependencies..."
-pip install -r requirements.txt
+# Install requirements
+pip install --upgrade pip
+pip install yt-dlp flask werkzeug
 
-# Update yt-dlp to latest version for best compatibility
-echo "🔄 Updating yt-dlp to latest version..."
+# Create necessary directories
+mkdir -p temp_downloads
+
+# Update yt-dlp to latest version
 pip install --upgrade yt-dlp
 
-# Skip PO Token plugin installation as it causes JSON parsing errors
-echo "⚠️ Skipping PO Token plugin to avoid compatibility issues..."
-
-# Verify installations
-echo "✅ Verifying installations..."
-python -c "import yt_dlp; print(f'yt-dlp version: {yt_dlp.version.__version__}')"
-python -c "import flask; print(f'Flask version: {flask.__version__}')"
-
-echo "🎉 Build completed successfully!"
-echo "📺 SapZap YouTube/Instagram Downloader is ready to deploy!"
-echo "✅ Using stable yt-dlp without problematic plugins"
-
+echo "Setup complete. Activate virtual environment with: source venv/bin/activate"

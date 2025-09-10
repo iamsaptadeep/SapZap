@@ -1,0 +1,50 @@
+services:
+  - type: web
+    name: sapzap-video-downloader
+    env: python
+    buildCommand: |
+      pip install --upgrade pip
+      pip install -r requirements.txt
+      # Install FFmpeg for HEVC/AAC support
+      apt-get update && apt-get install -y ffmpeg
+    startCommand: gunicorn --bind 0.0.0.0:$PORT --workers 1 --timeout 300 --worker-class sync --max-requests 10 --max-requests-jitter 5 app:app
+    plan: free
+    healthCheckPath: /health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.0
+      - key: YT_SID
+        sync: false
+      - key: YT_HSID
+        sync: false
+      - key: YT_SSID
+        sync: false
+      - key: YT_APISID
+        sync: false
+      - key: YT_SAPISID
+        sync: false
+      - key: YT_LOGIN_INFO
+        sync: false
+      - key: YT_VISITOR_INFO1_LIVE
+        sync: false
+      - key: YT_CONSENT
+        sync: false
+      - key: YT_PO_TOKEN
+        sync: false
+      - key: IG_SESSIONID
+        sync: false
+      - key: IG_CSRFTOKEN
+        sync: false
+      - key: IG_DS_USER_ID
+        sync: false
+      - key: IG_RUR
+        sync: false
+      - key: PROXY_URL_1
+        sync: false
+      - key: PROXY_URL_2
+        sync: false
+      - key: PROXY_URL_3
+        sync: false
+
+
+        

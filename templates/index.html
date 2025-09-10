@@ -1,359 +1,765 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>SapZap</title>
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script>
-        tailwind.config = {
-            theme: {
-                extend: {
-                    colors: {
-                        primary: '#EA344F',
-                        secondary: '#F56040',
-                        dark: '#000000',
-                        light: '#1e293b',
-                        card: 'rgba(15, 23, 42, 0.7)',
-                        input: 'rgba(30, 41, 59, 0.5)'
-                    }
-                }
-            }
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>SapZap</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <script src="https://cdn.tailwindcss.com"></script>
+
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            primary: '#EA344F',
+            secondary: '#F56040',
+            dark: '#000000',
+            light: '#1e293b',
+            card: 'rgba(15, 23, 42, 0.7)',
+            input: 'rgba(30, 41, 59, 0.5)'
+          }
         }
-    </script>
-    <style>
-        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
-        
-        :root {
-            --ig-gradient: linear-gradient(45deg, #EA344F, #d50b0b);
-        }
-        
-        body {
-            background: #000000;
-            min-height: 100vh;
-            color: #f1f5f9;
-            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
-            -webkit-font-smoothing: antialiased;
-            padding: 0;
-            margin: 0;
-        }
-        
+      }
+    }
+  </script>
+
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+
+    :root { --ig-gradient: linear-gradient(45deg, #EA344F, #d50b0b); }
+
+    html,body { 
+      height:100%; 
+      margin:0; 
+      padding:0; 
+      background:#000; 
+      color:#f1f5f9; 
+      font-family:'Inter',sans-serif; 
+      overflow-x: hidden;
+    }
+
+    body {
+        background: #000000;
+        min-height: 100vh;
+        color: #f1f5f9;
+        font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+        -webkit-font-smoothing: antialiased;
+        padding: 0;
+        margin: 0;
+    }
+    
+    .container {
+        max-width: 100%;
+        width: 100%;
+        margin: 0 auto;
+        background: #000;
+        min-height: 100vh;
+        padding-left: 1rem;
+        padding-right: 1rem;
+    }
+    
+    .header {
+        background: rgba(0, 0, 0, 0.9);
+        backdrop-filter: saturate(180%) blur(20px);
+        -webkit-backdrop-filter: saturate(180%) blur(20px);
+        padding-top: 1.5rem;
+        padding-bottom: 1rem;
+    }
+    
+    .card {
+        background: rgba(20, 20, 20, 0.9);
+        border-radius: 16px;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+    }
+    
+    .input-field {
+        background: rgba(30, 30, 30, 0.7);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        color: #f1f5f9;
+        transition: all 0.25s ease;
+        font-size: 16px;
+        padding: 14px 16px;
+        border-radius: 12px;
+        width: 100%;
+        box-sizing: border-box;
+    }
+    
+    .input-field:focus {
+        border-color: #EA344F;
+        box-shadow: 0 0 0 3px rgba(234, 52, 79, 0.25);
+        outline: none;
+    }
+    
+    .download-btn {
+        background: var(--ig-gradient);
+        transition: all 0.3s ease;
+        border-radius: 12px;
+        font-weight: 600;
+        letter-spacing: 0.5px;
+        font-size: 16px;
+        padding: 14px;
+        width: 100%;
+        border: none;
+        cursor: pointer;
+    }
+    
+    .download-btn:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 6px 20px rgba(234, 52, 79, 0.4);
+    }
+    
+    .download-btn:disabled {
+        opacity: 0.7;
+        cursor: not-allowed;
+        transform: none;
+        box-shadow: none;
+    }
+    
+    .reset-btn {
+        background: rgba(40, 40, 40, 0.7);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        border-radius: 12px;
+        transition: all 0.3s ease;
+        padding: 14px;
+        min-width: 56px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+    
+    .reset-btn:hover {
+        background: rgba(60, 60, 60, 0.7);
+    }
+    
+    .reset-btn:disabled {
+        opacity: 0.7;
+        cursor: not-allowed;
+    }
+    
+    .platform-card {
+        background: rgba(30, 30, 30, 0.7);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        border-radius: 14px;
+        transition: all 0.3s ease;
+        cursor: pointer;
+        padding: 1rem;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        height: 100%;
+    }
+    
+    .platform-card:hover, .platform-card.selected {
+        transform: translateY(-3px);
+        box-shadow: 0 8px 20px rgba(234, 52, 79, 0.2);
+        border-color: #EA344F;
+    }
+    
+    .spinner {
+        border-top-color: #EA344F;
+        animation: spin 1s linear infinite;
+    }
+    
+    @keyframes spin {
+        0% { transform: rotate(0deg); }
+        100% { transform: rotate(360deg); }
+    }
+    
+    .ig-gradient-text {
+        background: var(--ig-gradient);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+    }
+    
+    .result-card {
+        background: rgba(30, 30, 30, 0.9);
+        border-radius: 16px;
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        overflow: hidden;
+        margin-bottom: 1rem;
+    }
+    
+    .success-bg {
+        background: linear-gradient(135deg, rgba(10, 180, 100, 0.2), rgba(10, 180, 100, 0.1));
+    }
+    
+    .error-bg {
+        background: linear-gradient(135deg, rgba(234, 52, 79, 0.2), rgba(234, 52, 79, 0.1));
+    }
+    
+    .ios-home-indicator {
+        position: fixed;
+        bottom: 8px;
+        left: 50%;
+        transform: translateX(-50%);
+        width: 134px;
+        height: 5px;
+        background: rgba(255, 255, 255, 0.5);
+        border-radius: 100px;
+        z-index: 10;
+    }
+
+    .quality-badge {
+        background: rgba(234, 52, 79, 0.2);
+        color: #EA344F;
+        border-radius: 10px;
+        padding: 4px 8px;
+        font-size: 11px;
+        font-weight: 600;
+    }
+
+    .progress-bar {
+        height: 5px;
+        background: rgba(255, 255, 255, 0.1);
+        border-radius: 3px;
+        overflow: hidden;
+        margin-top: 10px;
+        width: 100%;
+    }
+
+    .progress-fill {
+        height: 100%;
+        background: var(--ig-gradient);
+        border-radius: 3px;
+        transition: width 0.3s ease;
+    }
+
+    .toast {
+        position: fixed;
+        bottom: 20px;
+        left: 50%;
+        transform: translateX(-50%);
+        background: rgba(30, 30, 30, 0.9);
+        color: white;
+        padding: 12px 18px;
+        border-radius: 10px;
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+        z-index: 1000;
+        opacity: 0;
+        transition: opacity 0.3s ease;
+        max-width: 90%;
+        text-align: center;
+    }
+
+    .toast.show {
+        opacity: 1;
+    }
+    
+    /* Mobile responsiveness */
+    @media (max-width: 640px) {
         .container {
-            max-width: 430px;
-            margin: 0 auto;
-            background: #000;
-            min-height: 100vh;
+            padding-left: 0.75rem;
+            padding-right: 0.75rem;
         }
         
         .header {
-            background: rgba(0, 0, 0, 0.9);
-            backdrop-filter: saturate(180%) blur(20px);
-            -webkit-backdrop-filter: saturate(180%) blur(20px);
+            padding-top: 1rem;
+            padding-bottom: 0.5rem;
+        }
+        
+        .header h1 {
+            font-size: 2rem;
         }
         
         .card {
-            background: rgba(20, 20, 20, 0.9);
-            border-radius: 24px;
-            border: 1px solid rgba(255, 255, 255, 0.08);
-            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+            padding: 1rem;
+            border-radius: 14px;
         }
         
         .input-field {
-            background: rgba(30, 30, 30, 0.7);
-            border: 1px solid rgba(255, 255, 255, 0.1);
-            color: #f1f5f9;
-            transition: all 0.25s ease;
-            font-size: 16px;
-            padding: 16px 20px;
-            border-radius: 14px;
+            padding: 12px 14px;
+            font-size: 15px;
         }
         
-        .input-field:focus {
-            border-color: #EA344F;
-            box-shadow: 0 0 0 3px rgba(234, 52, 79, 0.25);
-            outline: none;
-        }
-        
-        .download-btn {
-            background: var(--ig-gradient);
-            transition: all 0.3s ease;
-            border-radius: 14px;
-            font-weight: 600;
-            letter-spacing: 0.5px;
-            font-size: 17px;
-            padding: 16px;
-        }
-        
-        .download-btn:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 6px 20px rgba(234, 52, 79, 0.4);
-        }
-        
-        .reset-btn {
-            background: rgba(40, 40, 40, 0.7);
-            border: 1px solid rgba(255, 255, 255, 0.1);
-            border-radius: 14px;
-            transition: all 0.3s ease;
-        }
-        
-        .reset-btn:hover {
-            background: rgba(60, 60, 60, 0.7);
+        .download-btn, .reset-btn {
+            padding: 12px;
+            font-size: 15px;
         }
         
         .platform-card {
-            background: rgba(30, 30, 30, 0.7);
-            border: 1px solid rgba(255, 255, 255, 0.1);
-            border-radius: 18px;
-            transition: all 0.3s ease;
+            padding: 0.75rem;
         }
         
-        .platform-card:hover {
-            transform: translateY(-5px);
-            box-shadow: 0 10px 25px rgba(234, 52, 79, 0.2);
+        .platform-card .text-3xl {
+            font-size: 1.75rem;
         }
         
-        .spinner {
-            border-top-color: #EA344F;
-            animation: spin 1s linear infinite;
+        .options-container {
+            min-width: auto !important;
+        }
+    }
+    
+    @media (max-width: 400px) {
+        .platform-grid {
+            grid-template-columns: repeat(2, 1fr) !important;
         }
         
-        @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
+        .platform-card:nth-child(3) {
+            grid-column: span 2;
+            margin-top: 0.5rem;
         }
         
-        .ig-gradient-text {
-            background: var(--ig-gradient);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
+        .flex.gap-3 {
+            flex-direction: column;
         }
         
-        .result-card {
-            background: rgba(30, 30, 30, 0.9);
-            border-radius: 20px;
-            border: 1px solid rgba(255, 255, 255, 0.1);
-            overflow: hidden;
+        .reset-btn {
+            margin-top: 0.5rem;
+            width: 100%;
         }
-        
-        .success-bg {
-            background: linear-gradient(135deg, rgba(10, 180, 100, 0.2), rgba(10, 180, 100, 0.1));
-        }
-        
-        .error-bg {
-            background: linear-gradient(135deg, rgba(234, 52, 79, 0.2), rgba(234, 52, 79, 0.1));
-        }
-        
-        .ios-home-indicator {
-            position: fixed;
-            bottom: 8px;
-            left: 50%;
-            transform: translateX(-50%);
-            width: 134px;
-            height: 5px;
-            background: rgba(255, 255, 255, 0.5);
-            border-radius: 100px;
-            z-index: 10;
-        }
-    </style>
+    }
+  </style>
 </head>
 <body>
-    <!-- Clean iOS Container -->
-    <div class="container">
-        <!-- Header -->
-        <header class="header px-6 pt-12 pb-8 text-center">
-            <h1 class="text-4xl font-bold mb-3">
-                <span class="ig-gradient-text">SapZap</span>
-            </h1>
-            <p class="text-gray-400">Download YouTube & Instagram content</p>
-        </header>
+  <div class="container">
+    <header class="header px-4 pt-8 pb-6 text-center">
+      <h1 class="text-3xl font-bold mb-2">
+        <span class="ig-gradient-text">SapZap</span>
+      </h1>
+      <p class="text-gray-400 text-sm">Download YouTube & Instagram content at maximum quality</p>
+    </header>
 
-        <!-- Main Content -->
-        <main class="px-5 pb-20">
+    <main class="px-3 pb-16">
+      <!-- Platform Cards -->
+      <div class="grid grid-cols-3 gap-2 mb-6 platform-grid" id="platformCards">
+        <div class="platform-card text-center" data-platform="youtube">
+          <div class="text-2xl mb-2 text-red-500">
+            <i class="fab fa-youtube" aria-hidden="true"></i>
+          </div>
+          <p class="text-xs font-medium">YouTube</p>
+          <p class="text-xs text-gray-400 mt-1">720p-1080p Videos</p>
+        </div>
 
-            
-            <!-- Platform Cards -->
-            <div class="grid grid-cols-3 gap-3 mb-8">
-                <div class="platform-card p-5 rounded-lg text-center">
-                    <div class="text-3xl mb-3 text-red-500">
-                        <i class="fab fa-youtube"></i>
-                    </div>
-                    <p class="text-sm font-medium">YouTube</p>
-                    <p class="text-xs text-gray-400 mt-1">1080p Videos</p>
-                </div>
-                <div class="platform-card p-5 rounded-lg text-center">
-                    <div class="text-3xl mb-3 text-blue-400">
-                        <i class="fas fa-mobile-alt"></i>
-                    </div>
-                    <p class="text-sm font-medium">Shorts</p>
-                    <p class="text-xs text-gray-400 mt-1">High Quality</p>
-                </div>
-                <div class="platform-card p-5 rounded-lg text-center">
-                    <div class="text-3xl mb-3 text-purple-500">
-                        <i class="fab fa-instagram"></i>
-                    </div>
-                    <p class="text-sm font-medium">Reels</p>
-                    <p class="text-xs text-gray-400 mt-1">High Quality</p>
-                </div>
+        <div class="platform-card text-center" data-platform="youtube">
+          <div class="text-2xl mb-2 text-blue-400">
+            <i class="fas fa-mobile-alt" aria-hidden="true"></i>
+          </div>
+          <p class="text-xs font-medium">Shorts</p>
+          <p class="text-xs text-gray-400 mt-1">1080p+ Quality</p>
+        </div>
+
+        <div class="platform-card text-center" data-platform="instagram">
+          <div class="text-2xl mb-2 text-purple-500">
+            <i class="fab fa-instagram" aria-hidden="true"></i>
+          </div>
+          <p class="text-xs font-medium">Reels</p>
+          <p class="text-xs text-gray-400 mt-1">1080p+ Quality</p>
+        </div>
+      </div>
+
+      <!-- Download Card -->
+      <div class="card p-4 mb-4">
+        <form id="downloadForm" class="space-y-4" autocomplete="off">
+          <div>
+            <label for="urlInput" class="block text-gray-300 text-sm font-medium mb-2">
+              <i class="fas fa-link mr-1 text-primary" aria-hidden="true"></i>Enter YouTube/Instagram URL:
+            </label>
+            <input
+              type="url"
+              id="urlInput"
+              name="url"
+              required
+              placeholder="Paste YouTube or Instagram URL here"
+              class="input-field"
+              aria-label="Video URL"
+            />
+          </div>
+
+          <div class="flex flex-col sm:flex-row gap-3">
+            <div class="flex-1">
+              <label for="platformSelect" class="block text-gray-300 text-sm font-medium mb-2">Platform (optional)</label>
+              <select id="platformSelect" name="platform" class="input-field w-full" aria-label="Platform select">
+                <option value="">Auto-detect</option>
+                <option value="youtube">YouTube (videos)</option>
+                <option value="youtube">YouTube Shorts</option>
+                <option value="instagram">Instagram (reels)</option>
+              </select>
             </div>
 
-            
-            <!-- Download Card -->
-            <div class="card p-6 mb-6">
-                <form id="downloadForm">
-                    <div class="mb-5">
-                        <label for="urlInput" class="block text-gray-300 text-sm font-medium mb-3">
-                            <i class="fas fa-link mr-2 text-primary"></i>Enter YouTube/Instagram Copied Link:
-                        </label>
-                        <input 
-                            type="url" 
-                            id="urlInput"
-                            required
-                            placeholder=""
-                            class="input-field w-full"
-                        >
-                    </div>
-                    
-                    <div class="flex gap-3">
-                        <button 
-                            type="submit"
-                            id="downloadBtn"
-                            class="download-btn flex-grow text-white flex items-center justify-center font-bold"
-                        >
-                            <i class="fas fa-download mr-3"></i>DOWNLOAD
-                        </button>
-                        
-                        <button 
-                            type="button"
-                            id="resetBtn"
-                            class="reset-btn text-gray-300 px-4 flex items-center justify-center"
-                            title="Reset"
-                        >
-                            <i class="fas fa-redo"></i>
-                        </button>
-                    </div>
-                </form>
-                
-                <div id="loading" class="hidden text-center py-8">
-                    <div class="inline-block spinner rounded-full h-16 w-16 border-4 border-gray-800 border-t-primary mb-5"></div>
-                    <p class="text-gray-200 text-lg font-medium mb-1">Processing your request</p>
-                    <p class="text-sm text-gray-400">Downloading in highest quality</p>
-                </div>
+            <div class="options-container mt-4 sm:mt-0" style="min-width: 150px;">
+              <label class="block text-gray-300 text-sm font-medium mb-2">Options</label>
+              <div class="flex items-center gap-2 p-2 rounded-md" style="background: rgba(30,30,30,0.4);">
+                <input id="forceMerge" name="force_merge" type="checkbox" value="1" aria-label="Enable ffmpeg merge" />
+                <label for="forceMerge" class="text-xs text-gray-300">Enable ffmpeg merge</label>
+              </div>
             </div>
-            
-            
-            <!-- Result Container -->
-            <div id="result" class="hidden">
-                <!-- Result will be displayed here -->
-            </div>
-        </main>
-        
-        <!-- iOS Home Indicator -->
-        <div class="ios-home-indicator"></div>
-    </div>
+          </div>
 
-    <script>
-    document.getElementById('downloadForm').addEventListener('submit', async function(e) {
-        e.preventDefault();
-        
-        const url = document.getElementById('urlInput').value;
-        const downloadBtn = document.getElementById('downloadBtn');
-        const resetBtn = document.getElementById('resetBtn');
-        const loading = document.getElementById('loading');
-        const resultDiv = document.getElementById('result');
-        
-        // UI State Management
-        downloadBtn.disabled = true;
-        resetBtn.disabled = true;
+          <div class="progress-bar hidden" id="progressContainer">
+            <div class="progress-fill" id="progressFill" style="width: 0%"></div>
+          </div>
+
+          <div class="flex flex-col sm:flex-row gap-3">
+            <button
+              id="downloadBtn"
+              type="submit"
+              class="download-btn text-white flex items-center justify-center font-bold order-2 sm:order-1"
+              aria-live="polite"
+            >
+              <i class="fas fa-download mr-2" aria-hidden="true"></i>DOWNLOAD
+            </button>
+
+            <button
+              id="resetBtn"
+              type="button"
+              class="reset-btn text-gray-300 flex items-center justify-center order-1 sm:order-2"
+              title="Reset"
+              aria-label="Reset form"
+            >
+              <i class="fas fa-redo" aria-hidden="true"></i>
+            </button>
+          </div>
+
+          <div id="loading" class="hidden text-center py-6">
+            <div class="inline-block spinner rounded-full h-12 w-12 border-4 border-gray-800 border-t-primary mb-4" role="status" aria-hidden="true"></div>
+            <p class="text-gray-200 font-medium mb-1">Processing your request</p>
+            <p class="text-sm text-gray-400">Downloading in highest quality</p>
+            <p class="text-xs text-gray-500 mt-1" id="loadingDetails"></p>
+          </div>
+        </form>
+      </div>
+
+      <!-- Result Container -->
+      <div id="result" class="hidden"></div>
+
+      <!-- Info Section -->
+      <div class="card p-4 mt-4">
+        <h3 class="text-md font-bold mb-3 flex items-center">
+          <i class="fas fa-info-circle mr-2 text-primary"></i> About Quality
+        </h3>
+        <ul class="text-xs text-gray-400 space-y-2">
+          <li class="flex items-start">
+            <i class="fas fa-check-circle text-green-400 mr-2 mt-0.5"></i>
+            <span>YouTube Shorts & Instagram Reels: 1080p or higher</span>
+          </li>
+          <li class="flex items-start">
+            <i class="fas fa-check-circle text-green-400 mr-2 mt-0.5"></i>
+            <span>YouTube Videos: 1080p or 720p</span>
+          </li>
+          <li class="flex items-start">
+            <i class="fas fa-exclamation-triangle text-yellow-400 mr-2 mt-0.5"></i>
+            <span>Some content may require cookies for highest quality</span>
+          </li>
+        </ul>
+      </div>
+    </main>
+
+    <div class="ios-home-indicator" aria-hidden="true"></div>
+    <div class="toast" id="toast"></div>
+  </div>
+
+  <script>
+  (function () {
+    const form = document.getElementById('downloadForm');
+    const urlInput = document.getElementById('urlInput');
+    const platformSelect = document.getElementById('platformSelect');
+    const platformCards = document.getElementById('platformCards');
+    const forceMerge = document.getElementById('forceMerge');
+    const downloadBtn = document.getElementById('downloadBtn');
+    const resetBtn = document.getElementById('resetBtn');
+    const loading = document.getElementById('loading');
+    const loadingDetails = document.getElementById('loadingDetails');
+    const resultDiv = document.getElementById('result');
+    const progressContainer = document.getElementById('progressContainer');
+    const progressFill = document.getElementById('progressFill');
+    const toast = document.getElementById('toast');
+
+    let activeDownloadController = null;
+
+    function showToast(message, duration = 3000) {
+      toast.textContent = message;
+      toast.classList.add('show');
+      setTimeout(() => {
+        toast.classList.remove('show');
+      }, duration);
+    }
+
+    function updateForceMergeVisibility() {
+      const container = forceMerge.closest('.options-container');
+      if (!container) return;
+      if (platformSelect.value === 'instagram') {
+        forceMerge.checked = false;
+        container.style.display = 'none';
+      } else {
+        container.style.display = 'block';
+      }
+    }
+
+    function setUiBusy(isBusy) {
+      downloadBtn.disabled = isBusy;
+      resetBtn.disabled = isBusy;
+      if (isBusy) {
         loading.classList.remove('hidden');
-        resultDiv.classList.add('hidden');
-        resultDiv.innerHTML = '';
+        progressContainer.classList.remove('hidden');
+      } else {
+        loading.classList.add('hidden');
+        progressContainer.classList.add('hidden');
+        progressFill.style.width = '0%';
+      }
+    }
+
+    function updateProgress(loaded, total) {
+      if (total > 0) {
+        const percent = Math.round((loaded / total) * 100);
+        progressFill.style.width = `${percent}%`;
+        loadingDetails.textContent = `Downloading: ${percent}%`;
+      }
+    }
+
+    function escapeHtml(str) {
+      if (!str) return '';
+      return str.replace(/[&<>"']/g, s => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[s]));
+    }
+
+    function showError(msg) {
+      resultDiv.innerHTML = `
+        <div class="result-card p-4 error-bg">
+          <div class="text-center">
+            <div class="text-red-500 text-4xl mb-3">
+              <i class="fas fa-exclamation-triangle" aria-hidden="true"></i>
+            </div>
+            <h3 class="text-lg font-bold mb-2">Download Failed</h3>
+            <p class="text-gray-300 mb-3 text-sm">${escapeHtml(msg)}</p>
+            <button id="tryAgainBtn" class="download-btn mt-2 text-white px-4 py-2 rounded-lg w-full text-sm">
+              <i class="fas fa-redo mr-1" aria-hidden="true"></i>Try Again
+            </button>
+          </div>
+        </div>`;
+      resultDiv.classList.remove('hidden');
+      const tryBtn = document.getElementById('tryAgainBtn');
+      if (tryBtn) tryBtn.addEventListener('click', () => { 
+        resultDiv.classList.add('hidden'); 
+        urlInput.focus(); 
+      });
+      resultDiv.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+
+    function showSuccessMessage(filename, sizeStr, resolution) {
+      resultDiv.innerHTML = `
+        <div class="result-card p-4 success-bg">
+          <div class="text-center">
+            <div class="text-green-400 text-4xl mb-3">
+              <i class="fas fa-check-circle" aria-hidden="true"></i>
+            </div>
+            <h3 class="text-lg font-bold mb-2">Download Complete!</h3>
+            <p class="text-gray-200 mb-2 text-sm">Saved as <strong>${escapeHtml(filename)}</strong></p>
+            ${resolution ? `<p class="quality-badge inline-block mb-2">${resolution}p</p>` : ''}
+            ${sizeStr ? `<p class="text-gray-400 text-xs">File size: ${escapeHtml(sizeStr)}</p>` : ''}
+          </div>
+        </div>`;
+      resultDiv.classList.remove('hidden');
+      resultDiv.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+
+    function parseFilename(contentDisposition) {
+      if (!contentDisposition) return null;
+      const filenameStar = /filename\*=UTF-8''([^;]+)/i.exec(contentDisposition);
+      if (filenameStar) {
+        try { return decodeURIComponent(filenameStar[1]); } catch(_) {}
+      }
+      const match = /filename="?([^"]+)"?/i.exec(contentDisposition);
+      if (match) return match[1];
+      return null;
+    }
+
+    function extractResolutionFromFilename(filename) {
+      const resolutionMatch = filename.match(/_(\d+)p\./);
+      return resolutionMatch ? resolutionMatch[1] : null;
+    }
+
+    async function downloadBlobResponse(resp) {
+      const contentDisposition = resp.headers.get('Content-Disposition');
+      let filename = parseFilename(contentDisposition) || 'downloaded_video.mp4';
+      const resolution = extractResolutionFromFilename(filename);
+      const contentLength = resp.headers.get('Content-Length');
+      let sizeStr = '';
+      if (contentLength) {
+        const mb = Number(contentLength) / (1024 * 1024);
+        sizeStr = mb >= 1 ? mb.toFixed(2) + ' MB' : (Math.round(mb * 1024) + ' KB');
+      }
+
+      const reader = resp.body.getReader();
+      const contentLengthTotal = parseInt(contentLength || '0', 10);
+      let receivedLength = 0;
+      const chunks = [];
+      
+      while(true) {
+        const {done, value} = await reader.read();
         
-        try {
-            // Create a hidden form to submit the request
-            const form = document.createElement('form');
-            form.method = 'POST';
-            form.action = '/download';
-            form.style.display = 'none';
-            
-            const input = document.createElement('input');
-            input.type = 'hidden';
-            input.name = 'url';
-            input.value = url;
-            
-            form.appendChild(input);
-            document.body.appendChild(form);
-            form.submit();
-            
-            setTimeout(() => {
-                if (document.body.contains(form)) {
-                    document.body.removeChild(form);
-                }
-                downloadBtn.disabled = false;
-                resetBtn.disabled = false;
-                loading.classList.add('hidden');
-            }, 10000);
-            
-        } catch (error) {
-            downloadBtn.disabled = false;
-            resetBtn.disabled = false;
-            loading.classList.add('hidden');
-            
-            let errorMsg = "Could not process your request. Please try again.";
-            if (error.message.includes('Instagram')) {
-                errorMsg = "Instagram download failed. The reel might be private or restricted.";
-            }
-            else if (error.message.includes('unavailable')) {
-                errorMsg = "Video format unavailable. Try a different video.";
-            }
-            else if (error.message.includes('Private')) {
-                errorMsg = "Cannot download private videos.";
-            }
-            else if (error.message.includes('No formats found')) {
-                errorMsg = "No downloadable formats found. Video may be restricted.";
-            }
-            
-            resultDiv.innerHTML = `
-                <div class="result-card p-6 mb-6 error-bg">
-                    <div class="text-center">
-                        <div class="text-red-500 text-5xl mb-4">
-                            <i class="fas fa-exclamation-triangle"></i>
-                        </div>
-                        <h3 class="text-xl font-bold mb-2">Download Failed</h3>
-                        <p class="text-gray-300 mb-4">${errorMsg}</p>
-                        <button 
-                            onclick="document.getElementById('resetBtn').click()"
-                            class="reset-btn mt-2 text-white bg-primary px-5 py-3 rounded-lg w-full"
-                        >
-                            <i class="fas fa-redo mr-2"></i>Try Again
-                        </button>
-                    </div>
-                </div>
-            `;
-            resultDiv.classList.remove('hidden');
-            
-            // Scroll to result
-            resultDiv.scrollIntoView({ behavior: 'smooth' });
+        if (done) {
+          break;
         }
+        
+        chunks.push(value);
+        receivedLength += value.length;
+        updateProgress(receivedLength, contentLengthTotal);
+      }
+      
+      const blob = new Blob(chunks);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      showSuccessMessage(filename, sizeStr, resolution);
+      setTimeout(() => URL.revokeObjectURL(url), 60 * 1000);
+    }
+
+    async function postAndDownload(formData) {
+      // Abort any previous download
+      if (activeDownloadController) {
+        activeDownloadController.abort();
+      }
+      
+      activeDownloadController = new AbortController();
+      const signal = activeDownloadController.signal;
+      
+      const resp = await fetch('/download', {
+        method: 'POST',
+        body: formData,
+        signal: signal
+      });
+
+      if (resp.ok) {
+        const contentType = resp.headers.get('Content-Type') || '';
+        if (contentType.includes('text') || contentType.includes('json')) {
+          const text = await resp.text();
+          throw new Error(text || 'Server returned unexpected response');
+        }
+        await downloadBlobResponse(resp);
+      } else {
+        let errText = await resp.text().catch(() => `HTTP ${resp.status}`);
+        if (errText.length > 1000) errText = errText.slice(0, 900) + '...';
+        throw new Error(errText || `HTTP ${resp.status}`);
+      }
+    }
+
+    // Platform card selection
+    platformCards.querySelectorAll('.platform-card').forEach(card => {
+      card.addEventListener('click', () => {
+        platformCards.querySelectorAll('.platform-card').forEach(c => c.classList.remove('selected'));
+        card.classList.add('selected');
+        platformSelect.value = card.getAttribute('data-platform');
+        updateForceMergeVisibility();
+        urlInput.focus();
+      });
     });
-    
-    // Reset button functionality
-    document.getElementById('resetBtn').addEventListener('click', function() {
-        document.getElementById('urlInput').value = '';
-        document.getElementById('result').classList.add('hidden');
-        document.getElementById('result').innerHTML = '';
-        document.getElementById('urlInput').focus();
+
+    // Auto-detect platform from URL
+    urlInput.addEventListener('input', () => {
+      const url = urlInput.value;
+      if (!url) return;
+      
+      if (url.includes('instagram.com/') || url.includes('instagr.am/')) {
+        platformSelect.value = 'instagram';
+        platformCards.querySelectorAll('.platform-card').forEach(c => c.classList.remove('selected'));
+        const instagramCard = platformCards.querySelector('[data-platform="instagram"]');
+        if (instagramCard) instagramCard.classList.add('selected');
+      } else if (url.includes('youtube.com/') || url.includes('youtu.be/')) {
+        if (url.includes('/shorts/') || url.includes('youtube.com/shorts')) {
+          platformSelect.value = 'youtube';
+          platformCards.querySelectorAll('.platform-card').forEach(c => c.classList.remove('selected'));
+          const shortsCard = platformCards.querySelectorAll('[data-platform="youtube"]')[1];
+          if (shortsCard) shortsCard.classList.add('selected');
+        } else {
+          platformSelect.value = 'youtube';
+          platformCards.querySelectorAll('.platform-card').forEach(c => c.classList.remove('selected'));
+          const youtubeCard = platformCards.querySelector('[data-platform="youtube"]');
+          if (youtubeCard) youtubeCard.classList.add('selected');
+        }
+      }
+      updateForceMergeVisibility();
     });
-    
-    // Focus input on page load
-    document.addEventListener('DOMContentLoaded', function() {
-        document.getElementById('urlInput').focus();
+
+    platformSelect.addEventListener('change', function() {
+      platformCards.querySelectorAll('.platform-card').forEach(c => c.classList.remove('selected'));
+      if (this.value) {
+        if (this.value === 'instagram') {
+          const instagramCard = platformCards.querySelector('[data-platform="instagram"]');
+          if (instagramCard) instagramCard.classList.add('selected');
+        } else {
+          const youtubeCards = platformCards.querySelectorAll('[data-platform="youtube"]');
+          if (youtubeCards.length > 0) youtubeCards[0].classList.add('selected');
+        }
+      }
+      updateForceMergeVisibility();
     });
-    </script>
+
+    form.addEventListener('submit', async function (e) {
+      e.preventDefault();
+      resultDiv.classList.add('hidden');
+      resultDiv.innerHTML = '';
+      const url = urlInput.value && urlInput.value.trim();
+      if (!url) {
+        showError('Please paste a valid YouTube or Instagram link.');
+        return;
+      }
+
+      const fd = new FormData();
+      fd.append('url', url);
+      const platform = platformSelect.value || '';
+      fd.append('platform', platform);
+      if (forceMerge.checked) fd.append('force_merge', '1');
+
+      try {
+        setUiBusy(true);
+        loadingDetails.textContent = 'Initializing download...';
+        await postAndDownload(fd);
+      } catch (err) {
+        let message = (err && err.message) ? err.message : 'Unknown error';
+        
+        if (err.name === 'AbortError') {
+          message = 'Download was cancelled';
+          showToast('Download cancelled');
+        } else if (/instagram/i.test(message) && /private|restricted|login/i.test(message)) {
+          message = 'Instagram download failed — reel might be private or require login cookies.';
+        } else if (/no formats found|requested format is not available/i.test(message)) {
+          message = 'No downloadable formats found. Try a different link or enable ffmpeg merge for YouTube.';
+        } else if (/server error|500|Critical error/i.test(message)) {
+          message = 'Server error occurred. Check server logs.';
+        } else if (/below required|resolution/i.test(message)) {
+          message = 'The video does not meet the minimum resolution requirements.';
+        } else if (/unsupported url/i.test(message)) {
+          message = 'Unsupported URL. Only YouTube and Instagram are supported.';
+        }
+        
+        showError(message);
+      } finally {
+        setUiBusy(false);
+        activeDownloadController = null;
+      }
+    });
+
+    resetBtn.addEventListener('click', function () {
+      // Cancel any ongoing download
+      if (activeDownloadController) {
+        activeDownloadController.abort();
+      }
+      
+      urlInput.value = '';
+      resultDiv.classList.add('hidden');
+      resultDiv.innerHTML = '';
+      forceMerge.checked = false;
+      platformSelect.value = '';
+      platformCards.querySelectorAll('.platform-card').forEach(c => c.classList.remove('selected'));
+      updateForceMergeVisibility();
+      urlInput.focus();
+      showToast('Form reset');
+    });
+
+    document.addEventListener('DOMContentLoaded', function () {
+      urlInput.focus();
+      updateForceMergeVisibility();
+    });
+
+  })();
+  </script>
 </body>
 </html>
-
-
-
-
 

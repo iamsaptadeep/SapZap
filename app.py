@@ -1,3 +1,4 @@
+# app.py - SAPZAP downloader (Fixed YouTube and Instagram issues)
 import os
 import re
 import uuid
@@ -6,555 +7,514 @@ import tempfile
 import shutil
 import logging
 import time
-import subprocess
 import sys
-from flask import Flask, request, render_template, Response
+import subprocess
+from flask import Flask, request, render_template, Response, jsonify
+from config import INSTAGRAM_COOKIES, YOUTUBE_COOKIES, YT_PO_TOKEN
 import yt_dlp
 from yt_dlp.utils import DownloadError
 
-# Try to install PO Token plugin for better YouTube support
-def install_po_token_plugin():
-    """Install PO Token plugin if not already installed."""
-    try:
-        import yt_dlp_get_pot
-        logger.info("✅ PO Token plugin detected - will try to work around limitations")
-        return True
-    except ImportError:
-        logger.info("⚠️ PO Token plugin not installed - using alternative strategies")
-        return False
-
-def create_base_ydl_opts(temp_dir, headers, cookies_file=None):
-    """Create base yt-dlp options with enhanced configuration."""
-    opts = {
-        'outtmpl': f'{temp_dir}/%(title)s.%(ext)s',
-        'quiet': False,
-        'no_warnings': False,
-        'noplaylist': True,
-        'retries': 3,
-        'fragment_retries': 3,
-        'skip_unavailable_fragments': False,  # Changed to False for better quality
-        'windowsfilenames': True,
-        'logger': logger,
-        'noprogress': True,
-        'http_headers': headers,
-        'nocheckcertificate': True,
-        'sleep_interval': random.uniform(1, 3),
-        'max_sleep_interval': 5,
-        'geo_bypass': True,
-        'geo_bypass_country': 'US',
-        # Add format sorting preferences
-        'format_sort': ['res:1080', 'ext:mp4:m4a', 'hasaud', 'source'],
-        'format_sort_force': True,
-    }
-    
-    if cookies_file:
-        opts['cookiefile'] = cookies_file
-        
-    return opts
-
 app = Flask(__name__)
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
+# Logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[logging.StreamHandler(sys.stdout)]
+)
 logger = logging.getLogger(__name__)
 
-# Check for PO token plugin on startup
-HAS_PO_TOKEN = install_po_token_plugin()
-
-# Updated Instagram cookies - refresh these periodically
-INSTAGRAM_COOKIES = {
-    'sessionid': '62586856555%3AUrJiGyKV2H6db0%3A7%3AAYdxkb-PFtr2tdKmoM7ecXV3Wltfj08R1ljvQ61GYA',
-    'ds_user_id': '62586856555',
-    'csrftoken': 'N7J4wem0oKB16aRfi5zX8u',
-    'rur': '"HIL\05462586856555\0541785099262:01fe44bdea098b826d993cce284d6b774aaf32384da9b09458a4e1f4c60b78e008390929"',
-    # Add additional Instagram cookies for better quality
-    'ig_cb': '2',
-    'ig_did': 'C8F4C1F4-8B2A-4F4A-9F4A-1234567890AB',
-    'shbid': '"1234\05462586856555\0541758635262:01f0e123456789abcdef"',
-    'shbts': '"1727099262\05462586856555\0541758635262:01f0e123456789abcdef"'
-}
-
-# Enhanced YouTube cookies - users should replace with their own
-YOUTUBE_COOKIES = {
-    'VISITOR_INFO1_LIVE': 'b7a_E1WVJPs',
-    'YSC': 'H-_G9xY79AE',
-    'SID': 'g.a000zgjGCJyQc0bL3wr4HGWnrL21w6Ati0aw0DYAOoHZ7QeSGe0vFj0ULa7Q47NHAJMVtEuqrAACgYKAZoSARcSFQHGX2Mi8QVOYvhY5vlwv1rhakD57BoVAUF8yKrpj64NGFnVEe2cQDAjtqJE0076',
-    'SAPISID': 'XYUczUcvjVY7yZj0/AQGWubmQnegiTQSIN',
-    # Add visitor data for better quality access
-    '__Secure-3PSID': 'g.a000zgjGCJyQc0bL3wr4HGWnrL21w6Ati0aw0DYAOoHZ7QeSGe0vFj0ULa7Q47NHAJMVtEuqrAACgYKAZoSARcSFQHGX2Mi8QVOYvhY5vlwv1rhakD57BoVAUF8yKrpj64NGFnVEe2cQDAjtqJE0076',
-}
-
-# Regex to find video IDs from all common YouTube URL formats
-YOUTUBE_REGEX = re.compile(r'(?:youtube\.com/(?:watch\?v=|shorts/)|youtu\.be/)([\w-]+)')
-
-# Enhanced user agents with more variety
-USER_AGENTS = [
+# Useful constants and UA lists
+MOBILE_USER_AGENTS = [
+    'Mozilla/5.0 (iPhone; CPU iPhone OS 17_4_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1',
+    'Mozilla/5.0 (Linux; Android 14; SM-S908B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36',
+    'Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1',
+    'Mozilla/5.0 (Linux; Android 14; SM-G991B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36',
+]
+DESKTOP_USER_AGENTS = [
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
-    'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:133.0) Gecko/20100101 Firefox/133.0',
-    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.2 Safari/605.1.15',
-    'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
-    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Edge/131.0.0.0 Safari/537.36'
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:131.0) Gecko/20100101 Firefox/131.0',
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
 ]
 
-def create_cookies_file(cookies_dict):
-    """Creates a temporary cookie file for yt-dlp to use."""
-    with tempfile.NamedTemporaryFile(mode='w+', delete=False, suffix='.txt') as tf:
-        tf.write("# Netscape HTTP Cookie File\n")
-        domain = ".youtube.com" if 'VISITOR_INFO1_LIVE' in str(cookies_dict) else ".instagram.com"
-        for name, value in cookies_dict.items():
-            tf.write(f"{domain}\tTRUE\t/\tTRUE\t2147483647\t{name}\t{value}\n")
-        return tf.name
+YOUTUBE_REGEX = re.compile(r'(?:youtube\.com/(?:watch\?v=|shorts/)|youtu\.be/)([a-zA-Z0-9_-]{11})')
 
-def clean_filename(title, resolution=None, ext='mp4'):
-    """Generates a clean, safe filename for the downloaded media."""
-    if not title:
+def get_video_id_from_url(url):
+    m = YOUTUBE_REGEX.search(url)
+    return m.group(1) if m else None
+
+def is_shorts_url(url):
+    return '/shorts/' in url or 'youtube.com/shorts' in url or 'youtu.be/' in url
+
+def create_cookies_file(cookies_dict, domain='.youtube.com'):
+    """Write a simple Netscape cookiejar file from a dict of name->value. Returns path or None."""
+    if not cookies_dict or not any(cookies_dict.values()):
+        return None
+    try:
+        with tempfile.NamedTemporaryFile(mode='w+', delete=False, suffix='.txt') as tf:
+            tf.write("# Netscape HTTP Cookie File\n# Generated by SAPZAP\n\n")
+            count = 0
+            for name, value in cookies_dict.items():
+                if value and str(value).strip():
+                    expiry = str(int(time.time()) + 31536000)
+                    tf.write(f"{domain}\tTRUE\t/\tTRUE\t{expiry}\t{name}\t{value}\n")
+                    count += 1
+            logger.info(f"Created cookies file with {count} cookies")
+            return tf.name
+    except Exception as e:
+        logger.warning(f"Failed to create cookies file: {e}")
+        return None
+
+def normalize_po_token(candidate):
+    """
+    Try to normalize common PO token formats into the form expected by yt-dlp.
+    Return None if invalid.
+    """
+    if not candidate:
+        return None
+    s = str(candidate).strip()
+    # Check if it's already in correct format (client.context+token)
+    if re.match(r'^[a-zA-Z]+\.[a-zA-Z]+\+[A-Z0-9]+$', s):
+        return s
+    return None
+
+def clean_filename(title, resolution=None, ext='mp4', video_id=None):
+    if not title or not title.strip():
         base = f"sapzap_{uuid.uuid4().hex[:8]}"
     else:
         clean = re.sub(r'[^\w\s-]', '', title).strip()
         clean = re.sub(r'[-\s]+', '_', clean)
         base = f"sapzap_{clean[:50]}"
+    if video_id:
+        base = f"{base}_{video_id}"
     return f"{base}_{resolution}p.{ext}" if resolution else f"{base}.{ext}"
 
-def normalize_youtube_url(raw_url):
-    """Normalize YouTube URL for consistent processing."""
-    youtube_match = YOUTUBE_REGEX.search(raw_url)
-    if youtube_match:
-        video_id = youtube_match.group(1)
-        normalized_url = f'https://www.youtube.com/watch?v={video_id}'
-        logger.info(f"Normalized YouTube URL for ID: {video_id}")
-        return normalized_url, video_id, 'shorts' in raw_url
-    return None, None, False
+def extract_height_from_info(info):
+    if not info:
+        return None
+    # prefer direct height
+    if info.get('height'):
+        return info.get('height')
+    # requested_formats may contain heights
+    rf = info.get('requested_formats') or info.get('formats') or []
+    heights = [f.get('height') for f in rf if f.get('height')]
+    return max(heights) if heights else None
 
-def get_optimal_youtube_format(is_shorts, has_po_token, attempt=0):
+def download_with_config(url, config):
+    """Download using the supplied config and return info dict (ydl.extract_info will download)."""
+    with yt_dlp.YoutubeDL(config) as ydl:
+        info = ydl.extract_info(url, download=True)
+        return info
+
+def check_resolution_requirements(info, is_shorts):
     """
-    Get optimal format string based on video type and available features.
+    Check if the downloaded content meets resolution requirements.
     """
+    height = extract_height_from_info(info)
+    if not height:
+        logger.warning("Could not determine video height")
+        return False
+    
     if is_shorts:
-        # For Shorts: Use very specific format IDs that bypass PO tokens
-        if attempt == 0:
-            # Format 22: 720p MP4, Format 18: 360p MP4 (these usually work without PO tokens)
-            return (
-                '22/134+140/135+140/'  # 720p video + audio
-                '18+140/18+'  # 360p with audio fallback
-                'best[format_id=22]/best[format_id=18]/'
-                'best[height>=720][protocol=https]/best[height>=720]/'
-                'best[ext=mp4]/best'
-            )
-        elif attempt == 1:
-            # Try even more specific approach
-            return (
-                'best[format_id=22]/best[format_id=134]/best[format_id=135]/'
-                'bestvideo[height<=720]+bestaudio[ext=m4a]/'
-                'best[format_id=18]/best[ext=mp4]/best'
-            )
-        else:
-            # Last resort - just get anything
-            return 'best[format_id=18]/18/best'
+        if height < 1080:
+            logger.warning(f"Shorts/Reels resolution {height}p is below required 1080p")
+            return False
     else:
-        # For regular videos: These work well for 1080p
-        if attempt == 0:
-            return (
-                'best[format_id=22]/best[height=1080][format_id!=137]/'  # Avoid 137 (often needs PO token)
-                'bestvideo[height=1080][format_id!=137]+bestaudio/'
-                'best[height<=1080][ext=mp4]/best[ext=mp4]/best'
-            )
-        elif attempt == 1:
-            return (
-                'best[height<=1080][ext=mp4]/'
-                'best[format_id=22]/best[format_id=18]/'
-                'best[ext=mp4]/best'
-            )
-        else:
-            return 'best[format_id=18]/best[ext=mp4]/best'
+        if height < 720:
+            logger.warning(f"Video resolution {height}p is below required 720p")
+            return False
+    
+    logger.info(f"Video meets resolution requirements: {height}p")
+    return True
 
-def download_media(original_url):
-    """
-    Downloads media with enhanced quality targeting.
-    """
-    raw_url = original_url.strip()
-    temp_dir = tempfile.mkdtemp()
-    cookies_file = None
-
-    try:
-        # Random user agent selection
-        user_agent = random.choice(USER_AGENTS)
+def get_youtube_cookies():
+    """Get YouTube cookies file path or create one if needed"""
+    if not YOUTUBE_COOKIES or not any(YOUTUBE_COOKIES.values()):
+        return None
         
-        # Enhanced headers to appear more like a regular browser
-        headers = {
-            'User-Agent': user_agent,
-            'Accept-Language': 'en-US,en;q=0.9',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-            'Accept-Encoding': 'gzip, deflate, br',
-            'DNT': '1',
-            'Connection': 'keep-alive',
-            'Upgrade-Insecure-Requests': '1',
-            'Sec-Fetch-Dest': 'document',
-            'Sec-Fetch-Mode': 'navigate',
-            'Sec-Fetch-Site': 'none',
+    cookie_path = create_cookies_file(YOUTUBE_COOKIES, domain='.youtube.com')
+    if cookie_path:
+        logger.info("Created YouTube cookies file")
+    return cookie_path
+
+def get_instagram_cookies():
+    """Get Instagram cookies file path or create one if needed"""
+    if not INSTAGRAM_COOKIES or not any(INSTAGRAM_COOKIES.values()):
+        return None
+        
+    cookie_path = create_cookies_file(INSTAGRAM_COOKIES, domain='.instagram.com')
+    if cookie_path:
+        logger.info("Created Instagram cookies file")
+    return cookie_path
+
+def download_youtube_video(url, temp_dir, prefer_merge=False):
+    """
+    Download YouTube video with improved configuration
+    """
+    video_id = get_video_id_from_url(url)
+    is_shorts = is_shorts_url(url)
+    if not video_id:
+        raise ValueError("Invalid YouTube URL")
+
+    logger.info(f"Downloading YouTube video: {video_id} (prefer_merge={prefer_merge})")
+
+    # Check if ffmpeg is available for merging
+    ffmpeg_available = False
+    try:
+        subprocess.run(['ffmpeg', '-version'], capture_output=True, check=True)
+        ffmpeg_available = True
+        logger.info("FFmpeg is available for merging")
+    except (subprocess.SubprocessError, FileNotFoundError):
+        logger.warning("FFmpeg is not available, will use combined formats only")
+        prefer_merge = False
+
+    # Get cookies if available
+    youtube_cookies = get_youtube_cookies()
+    
+    # Base config
+    base_config = {
+        'outtmpl': f'{temp_dir}/%(title)s.%(ext)s',
+        'socket_timeout': 30,
+        'retries': 3,
+        'fragment_retries': 3,
+        'noplaylist': True,
+        'no_warnings': False,
+        'quiet': False,
+        'logger': logger,
+        'no_check_certificate': True,
+    }
+    
+    # Add cookies if available
+    if youtube_cookies:
+        base_config['cookiefile'] = youtube_cookies
+
+    # Add PO token if available
+    po_token = normalize_po_token(YT_PO_TOKEN)
+    if po_token:
+        base_config['extractor_args'] = {
+            'youtube': {
+                'player_client': ['android', 'web'],
+                'player_skip': ['configs', 'webpage']
+            }
         }
 
-        # Base yt-dlp options with quality optimization
-        ydl_opts = create_base_ydl_opts(temp_dir, headers)
+    # Define format selectors based on content type
+    if is_shorts:
+        # For Shorts, prioritize higher resolutions
+        if prefer_merge and ffmpeg_available:
+            selectors = [
+                'bestvideo[height>=1080][ext=mp4]+bestaudio[ext=m4a]/best[height>=1080][ext=mp4]/best[ext=mp4]',
+                'bestvideo[height>=720][ext=mp4]+bestaudio[ext=m4a]/best[height>=720][ext=mp4]/best[ext=mp4]',
+                'best[ext=mp4]'
+            ]
+        else:
+            selectors = [
+                'best[height>=1080][ext=mp4]/best[height>=720][ext=mp4]/best[ext=mp4]',
+                'best[ext=mp4]'
+            ]
+    else:
+        # For regular videos, cap at 1080p
+        if prefer_merge and ffmpeg_available:
+            selectors = [
+                'bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/best[height<=1080][ext=mp4]/best[height>=720][ext=mp4]',
+                'best[height<=1080][ext=mp4]/best[height>=720][ext=mp4]',
+                'best[ext=mp4]'
+            ]
+        else:
+            selectors = [
+                'best[height<=1080][ext=mp4]/best[height>=720][ext=mp4]',
+                'best[ext=mp4]'
+            ]
 
-        # Check if it's a YouTube URL
-        normalized_url, video_id, is_shorts = normalize_youtube_url(raw_url)
-        
-        if normalized_url:
-            logger.info("YouTube video URL detected.")
-            url = normalized_url
-            
-            # Enhanced YouTube configuration for higher quality
-            extractor_args = {
-                'youtube': {
-                    'player_client': ['ios', 'web'],  # iOS first, avoid android (PO token issues)
-                    'player_skip': ['webpage', 'configs'],  # Skip problematic parsers
-                    'lang': ['en'],
-                    'max_comments': ['0'],  # Don't fetch comments
-                    # CRITICAL: Force enable formats that might be missing PO tokens
-                    'formats': 'missing_pot',  # This enables broken formats anyway
-                    # Try to bypass PO token requirements
-                    'skip_dash_manifest': True,  # Skip DASH (often requires PO tokens)
-                }
+    last_err = None
+    for i, selector in enumerate(selectors):
+        try:
+            config = dict(base_config)
+            config['format'] = selector
+            config['http_headers'] = {
+                'User-Agent': random.choice(DESKTOP_USER_AGENTS),
+                'Accept-Language': 'en-US,en;q=0.9',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                'Accept-Encoding': 'gzip, deflate',
+                'DNT': '1',
+                'Connection': 'keep-alive',
+                'Upgrade-Insecure-Requests': '1',
+                'Referer': 'https://www.youtube.com/',
             }
-            
-            # Add visitor data if available to help with quality
-            if 'VISITOR_INFO1_LIVE' in YOUTUBE_COOKIES:
-                extractor_args['youtube']['visitor_data'] = YOUTUBE_COOKIES['VISITOR_INFO1_LIVE']
-            
-            ydl_opts.update({
-                'http_headers': {
-                    **headers,
-                    'Referer': 'https://www.youtube.com/',
-                    'Origin': 'https://www.youtube.com',
-                },
-                'extractor_args': extractor_args,
-                'format': get_optimal_youtube_format(is_shorts, HAS_PO_TOKEN, 0),
-                # Force quality selection
-                'prefer_ffmpeg': True,
-                'keepvideo': False,
-                # Ignore errors for missing formats and try alternatives
-                'ignoreerrors': False,
-                'no_warnings': False,
-                # Force format selection even if it might fail
-                'force_generic_extractor': False,
-            })
-            
-            if is_shorts:
-                logger.info("YouTube Shorts detected - targeting highest resolution")
-            else:
-                logger.info("YouTube video detected - targeting 1080p")
-            
-            # Use cookies for authentication
-            if YOUTUBE_COOKIES:
-                cookies_file = create_cookies_file(YOUTUBE_COOKIES)
-                ydl_opts['cookiefile'] = cookies_file
-                logger.info("Using YouTube cookies for authentication")
 
-        elif 'instagram.com/reel' in raw_url:
-            logger.info("Instagram Reel URL detected.")
-            url = raw_url
-            
-            # Enhanced Instagram configuration for highest quality
-            ydl_opts.update({
-                'http_headers': {
-                    **headers,
-                    'Referer': 'https://www.instagram.com/',
-                    'Origin': 'https://www.instagram.com',
-                    'X-Instagram-AJAX': '1',
-                    'X-Requested-With': 'XMLHttpRequest',
-                },
-                # Aggressive format selection targeting 1080p specifically
-                'format': (
-                    # Target 1080p specifically first (1080x1920 for vertical content)
-                    'bestvideo[height=1920]+bestaudio/best[height=1920]/'
-                    'bestvideo[height>=1920]+bestaudio/best[height>=1920]/'
-                    'bestvideo[height=1080]+bestaudio/best[height=1080]/'
-                    'bestvideo[height>=1080]+bestaudio/best[height>=1080]/'
-                    # Try width-based selection for horizontal content
-                    'bestvideo[width=1080]+bestaudio/best[width=1080]/'
-                    'bestvideo[width>=1080]+bestaudio/best[width>=1080]/'
-                    # Look for specific high-quality format patterns
-                    'best[height=1920]/best[height>=1920]/'
-                    'best[height=1080]/best[height>=1080]/'
-                    'best[width=1080]/best[width>=1080]/'
-                    # Try format IDs that might contain quality indicators
-                    'best[format_id*=1920]/best[format_id*=1080]/'
-                    # Fallback to highest available
-                    'bestvideo+bestaudio/best'
-                ),
-                # Enhanced format sorting - prioritize resolution above all
-                'format_sort': ['res:1920', 'res:1080', 'ext:mp4', 'hasaud', 'br'],
-                'format_sort_force': True,
-                'extract_flat': False,
-                # Force merge of video and audio for best quality
-                'merge_output_format': 'mp4',
-                # Don't prefer free formats if paid ones are higher quality
-                'prefer_free_formats': False,
-                # Add verbose format information for debugging
-                'listformats': False,  # Set to True for debugging format availability
-            })
-            
-            cookies_file = create_cookies_file(INSTAGRAM_COOKIES)
-            ydl_opts['cookiefile'] = cookies_file
-            logger.info("Using Instagram cookies for highest quality download")
-            
-        else:
-            raise ValueError("Unsupported URL. Please provide a valid YouTube or Instagram Reel link.")
+            logger.info(f"Attempt {i+1} with selector: {selector}")
+            info = download_with_config(url, config)
 
-        # Add a small delay before download
-        time.sleep(random.uniform(0.5, 2.0))
+            # Check if resolution meets requirements
+            if not check_resolution_requirements(info, is_shorts):
+                logger.warning(f"Downloaded video does not meet resolution requirements, trying next selector")
+                continue
 
-        # Perform the download with multiple strategies
-        max_attempts = 3  # Increased attempts for better success rate
-        last_error = None
-        info = None
-        
-        for attempt in range(max_attempts):
-            try:
-                logger.info(f"Download attempt {attempt + 1}/{max_attempts}")
-                
-                current_opts = ydl_opts.copy()
-                
-                if attempt == 1 and normalized_url:
-                    # Second attempt: Use pure iOS client and avoid android completely
-                    logger.info("Retry with iOS-only client strategy for better quality")
-                    current_opts['extractor_args']['youtube']['player_client'] = ['ios']
-                    current_opts['extractor_args']['youtube']['skip_dash_manifest'] = False  # Re-enable DASH
-                    current_opts['format'] = get_optimal_youtube_format(is_shorts, HAS_PO_TOKEN, 1)
+            # Success
+            height = extract_height_from_info(info)
+            info['_final_height'] = height
+            logger.info(f"SUCCESS: Downloaded at {height}p with selector: {selector}")
+            
+            # Clean up cookies file
+            if youtube_cookies and os.path.exists(youtube_cookies):
+                try:
+                    os.unlink(youtube_cookies)
+                except:
+                    pass
                     
-                elif attempt == 2 and normalized_url:
-                    # Third attempt: Maximum compatibility - remove all advanced features
-                    logger.info("Retry with maximum compatibility - removing PO token dependencies")
-                    current_opts['extractor_args']['youtube'] = {
-                        'player_client': ['ios'],
-                        'lang': ['en'],
-                        # Remove all potentially problematic options
-                    }
-                    current_opts['format'] = get_optimal_youtube_format(is_shorts, HAS_PO_TOKEN, 2)
+            return info, video_id, is_shorts
+
+        except Exception as e:
+            last_err = e
+            logger.warning(f"Attempt {i+1} with selector '{selector}' failed: {e}")
+            # Small delay before next attempt
+            time.sleep(1)
+
+    # Clean up cookies file if still exists
+    if youtube_cookies and os.path.exists(youtube_cookies):
+        try:
+            os.unlink(youtube_cookies)
+        except:
+            pass
+
+    # All attempts failed
+    if last_err:
+        raise last_err
+    raise RuntimeError("All YouTube download attempts failed")
+
+def download_instagram_reel(url, temp_dir):
+    """
+    Download an Instagram reel with retry logic for consistent quality.
+    """
+    logger.info("Downloading Instagram reel - selecting highest quality")
+    
+    # Get cookies if available
+    instagram_cookies = get_instagram_cookies()
+    
+    base_config = {
+        'outtmpl': f'{temp_dir}/%(title)s.%(ext)s',
+        'socket_timeout': 20,
+        'retries': 3,
+        'noplaylist': True,
+        'logger': logger,
+        'no_check_certificate': True,
+    }
+    
+    # Add cookies if available
+    if instagram_cookies:
+        base_config['cookiefile'] = instagram_cookies
+
+    # Try to get the highest resolution available
+    selectors = [
+        'bestvideo[height<=1920][ext=mp4]+bestaudio[ext=m4a]/best[height<=1920][ext=mp4]',  # Try merged first
+        'best[height<=1920][ext=mp4]',  # Fallback to best combined
+    ]
+
+    last_err = None
+    max_retries = 3
+    
+    for sel in selectors:
+        for attempt in range(max_retries):
+            try:
+                cfg = dict(base_config)
+                cfg['format'] = sel
+                cfg['http_headers'] = {
+                    'User-Agent': random.choice(MOBILE_USER_AGENTS),
+                    'Referer': 'https://www.instagram.com/',
+                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                    'Accept-Language': 'en-US,en;q=0.5',
+                    'Accept-Encoding': 'gzip, deflate',
+                    'DNT': '1',
+                    'Connection': 'keep-alive',
+                    'Upgrade-Insecure-Requests': '1',
+                }
                 
-                elif attempt >= 1 and 'instagram.com/reel' in raw_url:
-                    # For Instagram: Try different format strategies aggressively
-                    logger.info(f"Instagram retry attempt {attempt} - targeting higher quality")
-                    if attempt == 1:
-                        # More aggressive targeting of 1080p formats
-                        current_opts['format'] = (
-                            # Try very specific height targeting
-                            'bestvideo[height=1920][ext=mp4]+bestaudio[ext=m4a]/'
-                            'bestvideo[height=1080][ext=mp4]+bestaudio[ext=m4a]/'
-                            'bestvideo[height>=1920]+bestaudio/best[height>=1920]/'
-                            'bestvideo[height>=1080]+bestaudio/best[height>=1080]/'
-                            # Try different resolution patterns
-                            'best[height=1920][ext=mp4]/best[height=1080][ext=mp4]/'
-                            'best[width=1080][ext=mp4]/best[width>=1080]/'
-                            'best'
-                        )
-                        # Adjust format sorting for this attempt
-                        current_opts['format_sort'] = ['res:1920', 'res:1080', 'br', 'ext:mp4']
-                    else:
-                        # Final attempt: List available formats and pick best
-                        current_opts['format'] = (
-                            # Try to get any high quality format available
-                            'bestvideo[height>=1000]+bestaudio/'
-                            'best[height>=1000]/'
-                            'bestvideo+bestaudio/'
-                            'best'
-                        )
-                        # Remove restrictive format sorting
-                        if 'format_sort' in current_opts:
-                            del current_opts['format_sort']
-                        if 'format_sort_force' in current_opts:
-                            del current_opts['format_sort_force']
-                
-                with yt_dlp.YoutubeDL(current_opts) as ydl:
+                with yt_dlp.YoutubeDL(cfg) as ydl:
                     info = ydl.extract_info(url, download=True)
-                
-                # If we get here, download succeeded
-                break
-                
-            except DownloadError as e:
-                last_error = e
-                error_msg = str(e).lower()
-                logger.warning(f"Attempt {attempt + 1} failed: {e}")
-                
-                if 'bot' in error_msg or 'sign in' in error_msg:
-                    logger.error("YouTube bot detection triggered")
-                    if attempt == max_attempts - 1:
-                        raise RuntimeError(
-                            "YouTube is blocking downloads due to bot detection. "
-                            "Please update your YouTube cookies or try again later."
-                        )
-                elif 'unavailable' in error_msg or 'private' in error_msg:
-                    raise RuntimeError("This video is unavailable, private, or has been removed.")
-                
-                # Add delay between attempts
-                if attempt < max_attempts - 1:
-                    delay = random.uniform(2, 5)
-                    logger.info(f"Waiting {delay:.1f}s before retry...")
-                    time.sleep(delay)
-            
+                    height = extract_height_from_info(info)
+                    
+                    # Check if resolution meets requirements (minimum 1080p for Reels)
+                    if height and height < 1080:
+                        logger.warning(f"Instagram Reel resolution {height}p is below required 1080p, trying next selector")
+                        continue
+                        
+                    info['_final_height'] = height
+                    logger.info(f"Instagram download succeeded (selector={sel}) - height={height}")
+                    
+                    # Clean up cookies file
+                    if instagram_cookies and os.path.exists(instagram_cookies):
+                        try:
+                            os.unlink(instagram_cookies)
+                        except:
+                            pass
+                            
+                    return info, None, True
             except Exception as e:
-                last_error = e
-                logger.warning(f"Attempt {attempt + 1} failed with unexpected error: {e}")
-                if attempt == max_attempts - 1:
-                    raise RuntimeError(f"Download failed after {max_attempts} attempts: {str(e)}")
+                last_err = e
+                logger.warning(f"Instagram selector {sel} attempt {attempt+1} failed: {e}")
                 
-                time.sleep(1)
-        
-        # Check if we got valid info
-        if not info:
-            if last_error:
-                raise last_error
-            else:
-                raise RuntimeError("All download attempts failed without extracting video info")
+                # Wait before retry
+                if attempt < max_retries - 1:
+                    wait_time = (2 ** attempt) + random.random()
+                    time.sleep(wait_time)
+                continue
 
-        # Find downloaded file
-        files = [f for f in os.listdir(temp_dir) if f.lower().endswith(('.mp4', '.mkv', '.webm'))]
-        if not files:
-            raise RuntimeError("Download succeeded, but no media file was found.")
-        
-        file_path = os.path.join(temp_dir, files[0])
-        
-        # Generate filename with resolution info and log the actual quality
-        final_height = info.get('height')
-        final_width = info.get('width')
-        format_id = info.get('format_id', 'unknown')
-        
-        logger.info(f"📹 Downloaded format: {format_id}, Resolution: {final_width}x{final_height}")
-        
-        # Quality achievement logging with proper Instagram resolution expectations
-        if is_shorts:
-            if final_height and final_height >= 1080:
-                logger.info(f"✅ Shorts downloaded at {final_height}p - excellent quality achieved!")
-            elif final_height and final_height >= 720:
-                logger.info(f"✅ Shorts downloaded at {final_height}p - good quality achieved")
-            else:
-                logger.warning(f"⚠️ Shorts downloaded at {final_height}p - YouTube PO token restrictions in effect")
-        elif 'instagram.com/reel' in raw_url:
-            # Instagram Reels are typically 1080x1920 (vertical) - check for both dimensions
-            if (final_height and final_height >= 1920) or (final_width and final_width >= 1080):
-                logger.info(f"✅ Instagram Reel downloaded at {final_width}x{final_height} - excellent 1080p+ quality achieved!")
-            elif (final_height and final_height >= 1080) or (final_width and final_width >= 720):
-                logger.info(f"✅ Instagram Reel downloaded at {final_width}x{final_height} - good quality achieved")
-            else:
-                logger.warning(f"⚠️ Instagram Reel downloaded at {final_width}x{final_height} - expected 1080x1920, may need fresh cookies")
+    # Clean up cookies file if still exists
+    if instagram_cookies and os.path.exists(instagram_cookies):
+        try:
+            os.unlink(instagram_cookies)
+        except:
+            pass
+
+    if last_err:
+        raise last_err
+    raise RuntimeError("Instagram download failed after all retries")
+
+def download_media(url, platform_hint=None, prefer_merge=False):
+    """
+    Master function - chooses between youtube and instagram based on platform_hint
+    or auto-detect from url.
+    """
+    url = url.strip()
+    temp_dir = tempfile.mkdtemp(prefix='sapzap_')
+    try:
+        logger.info(f"Processing URL: {url} platform_hint={platform_hint} prefer_merge={prefer_merge}")
+
+        # determine platform
+        if platform_hint:
+            platform = platform_hint.lower()
         else:
-            if final_height == 1080:
-                logger.info(f"✅ Video downloaded at 1080p - target quality achieved!")
-            elif final_height and final_height >= 720:
-                logger.info(f"✅ Video downloaded at {final_height}p - good quality achieved")
+            if 'instagram.com/' in url:
+                platform = 'instagram'
+            elif 'youtube.com' in url or 'youtu.be' in url:
+                platform = 'youtube'
             else:
-                logger.warning(f"⚠️ Video downloaded at {final_height}p - target was 1080p")
-        
-        filename = clean_filename(info.get('title', 'video'), final_height)
+                raise ValueError("Unsupported URL. Only YouTube and Instagram supported.")
 
-        logger.info(f"Successfully downloaded: {filename}")
+        if platform == 'instagram':
+            info, video_id, is_shorts = download_instagram_reel(url, temp_dir)
+        else:
+            # youtube path
+            info, video_id, is_shorts = download_youtube_video(url, temp_dir, prefer_merge=prefer_merge)
+
+        # find downloaded file in temp_dir
+        files = [f for f in os.listdir(temp_dir) if f.lower().endswith(('.mp4', '.mkv', '.webm', '.mov', '.m4a'))]
+        if not files:
+            raise RuntimeError("Download completed but no file was found in temp directory")
+        # pick first file (yt-dlp outputs single file in most successful cases)
+        file_path = os.path.join(temp_dir, files[0])
+
+        title = info.get('title', 'unknown')
+        height = info.get('_final_height') or extract_height_from_info(info) or 'unknown'
+        # ensure height is string/number
+        try:
+            height_int = int(height) if isinstance(height, (int, float, str)) and str(height).isdigit() else height
+        except:
+            height_int = height
+
+        # create friendly filename
+        if video_id:
+            filename = clean_filename(title, resolution=height_int, ext='mp4', video_id=video_id)
+        else:
+            filename = clean_filename(title, resolution=height_int, ext='mp4', video_id=uuid.uuid4().hex[:8])
+
+        logger.info(f"Prepared file: {filename} (path: {file_path})")
         return file_path, filename, temp_dir
 
-    except DownloadError as de:
-        logger.error(f"yt-dlp download failed for URL {original_url}: {de}")
+    except Exception:
+        # cleanup on error
         if temp_dir and os.path.exists(temp_dir):
-            shutil.rmtree(temp_dir, ignore_errors=True)
-        
-        error_msg = str(de).lower()
-        if 'bot' in error_msg or 'sign in' in error_msg:
-            raise RuntimeError(
-                "YouTube is blocking downloads. Try updating your YouTube cookies "
-                "or wait before making more requests."
-            )
-        elif 'unavailable' in error_msg:
-            raise RuntimeError("This video is unavailable or has been removed.")
-        else:
-            raise RuntimeError(f"Download failed: {str(de)}")
-            
-    except Exception as e:
-        logger.error(f"Unexpected error for URL {original_url}: {e}")
-        if temp_dir and os.path.exists(temp_dir):
-            shutil.rmtree(temp_dir, ignore_errors=True)
-        raise RuntimeError(f"An unexpected error occurred: {str(e)}")
-        
-    finally:
-        if cookies_file and os.path.exists(cookies_file):
-            os.unlink(cookies_file)
+            try:
+                shutil.rmtree(temp_dir, ignore_errors=True)
+            except:
+                pass
+        raise
 
+# Flask routes
 @app.route('/')
 def index():
     return render_template('index.html')
 
 @app.route('/download', methods=['POST'])
 def download():
-    url = request.form.get('url', '')
+    url = request.form.get('url') or request.values.get('url') or ''
+    platform = request.form.get('platform') or request.values.get('platform') or ''
+    force_merge = bool(request.form.get('force_merge') or request.values.get('force_merge'))
+    url = url.strip()
     if not url:
         return "URL is required.", 400
 
-    try:
-        file_path, filename, temp_dir = download_media(url)
+    # convert platform empty string to None for auto-detect
+    platform_hint = platform.strip().lower() if platform and platform.strip() else None
 
+    try:
+        # Call master download
+        file_path, filename, temp_dir = download_media(url, platform_hint=platform_hint, prefer_merge=force_merge)
+
+        # Stream file back
         def generate():
             try:
                 with open(file_path, 'rb') as f:
                     while True:
-                        chunk = f.read(1024 * 1024)  # 1MB chunks
+                        chunk = f.read(512 * 1024)
                         if not chunk:
                             break
                         yield chunk
             finally:
-                shutil.rmtree(temp_dir, ignore_errors=True)
+                # cleanup after streaming
+                if temp_dir and os.path.exists(temp_dir):
+                    try:
+                        shutil.rmtree(temp_dir, ignore_errors=True)
+                        logger.info("Temporary files cleaned up")
+                    except Exception as e:
+                        logger.warning(f"Failed to remove temp dir: {e}")
 
-        # Determine MIME type
         ext = os.path.splitext(filename)[1][1:].lower()
-        mime_types = {
-            'mp4': 'video/mp4',
-            'webm': 'video/webm',
-            'mkv': 'video/x-matroska'
-        }
+        mime_types = {'mp4': 'video/mp4', 'webm': 'video/webm', 'mkv': 'video/x-matroska', 'mov': 'video/quicktime', 'm4a': 'audio/mp4'}
         mime = mime_types.get(ext, 'application/octet-stream')
 
-        return Response(
-            generate(),
-            mimetype=mime,
-            headers={
-                'Content-Disposition': f'attachment; filename="{filename}"',
-                'Content-Type': mime
-            }
-        )
+        headers = {
+            'Content-Disposition': f'attachment; filename="{filename}"',
+            'Content-Type': mime,
+            'Cache-Control': 'no-cache',
+            'Connection': 'close',
+        }
 
-    except (ValueError, RuntimeError) as e:
-        logger.warning(f"Download failed for '{url}': {e}")
-        return str(e), 400
+        return Response(generate(), mimetype=mime, headers=headers)
+
+    except ValueError as ve:
+        logger.warning(f"Download failed (client): {ve}")
+        return str(ve), 400
     except Exception as e:
-        logger.error(f"Critical error during download from '{url}': {e}")
-        return "A server error occurred. Please check the link or try again later.", 500
+        logger.error(f"Critical error during download: {e}", exc_info=True)
+        return "A server error occurred. Check server logs for details.", 500
+
+@app.route('/health')
+def health():
+    yt_cookies_count = len([v for v in YOUTUBE_COOKIES.values() if v]) if YOUTUBE_COOKIES else 0
+    ig_cookies_count = len([v for v in INSTAGRAM_COOKIES.values() if v]) if INSTAGRAM_COOKIES else 0
+    po_token_norm = normalize_po_token(YT_PO_TOKEN)
+    return {
+        'status': 'healthy',
+        'yt_dlp_version': yt_dlp.version.__version__,
+        'youtube_cookies_configured': yt_cookies_count,
+        'instagram_cookies_configured': ig_cookies_count,
+        'po_token': 'valid' if po_token_norm else 'invalid_or_missing',
+        'note': 'If YouTube returns "content not available on this app", try updating cookies/PO token or enable force merge (requires server ffmpeg).'
+    }, 200
 
 if __name__ == '__main__':
-    # Print startup message with configuration info
-    print("\n" + "="*60)
-    print("📺 SapZap YouTube/Instagram Downloader - Enhanced Quality")
-    print("="*60)
-    
-    if HAS_PO_TOKEN:
-        print("✅ PO Token plugin available - highest quality enabled")
-    else:
-        print("⚠️  PO Token plugin not installed - may get reduced quality")
-        print("   Install with: pip install yt-dlp-get-pot")
-    
-    if not YOUTUBE_COOKIES:
-        print("⚠️  WARNING: No YouTube cookies configured!")
-        print("   Add fresh cookies for best quality and reliability")
-    else:
-        print("✅ YouTube cookies configured")
-    
-    print("\n🎯 Quality Targets:")
-    print("   • YouTube Videos: 1080p")
-    print("   • YouTube Shorts: Highest available (bypassing PO token restrictions)")
-    print("   • Instagram Reels: 1080x1920 (Full HD)")
-    print("\n💡 Tips for better quality:")
-    print("   • YouTube: Update cookies regularly for best results")
-    print("   • Instagram: Ensure cookies are fresh and valid")
-    print("   • Instagram Reels: Target 1920p height (1080x1920 resolution)")
-    print("   • For Shorts: Quality may be limited by YouTube's restrictions")
-    print("="*60 + "\n")
-    
+    print("\n🎬 SAPZAP - Smart Resolution Downloader")
+    print(f"yt-dlp version: {yt_dlp.version.__version__}")
+    po_token_norm = normalize_po_token(YT_PO_TOKEN)
+    print(f"PO token: {'VALID' if po_token_norm else 'INVALID or MISSING'}")
+    # Check if ffmpeg is available
+    try:
+        subprocess.run(['ffmpeg', '-version'], capture_output=True, check=True)
+        print("FFmpeg: AVAILABLE (merge supported)")
+    except (subprocess.SubprocessError, FileNotFoundError):
+        print("FFmpeg: NOT AVAILABLE (merge not supported)")
+    print("Starting server...")
     app.run(debug=False, host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
-
 
     
