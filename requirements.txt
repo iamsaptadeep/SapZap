@@ -1,8 +1,8 @@
 Flask>=3.1.0
-yt-dlp>=2025.09.09
-Werkzeug>=3.1.0
-gunicorn>=22.0.0
+yt-dlp>=2025.9.5
+Werkzeug>=3.1.3
+gunicorn>=20.1.0
 requests>=2.32.0
-python-dotenv
+python-dotenv>=1.0.0
 
 
