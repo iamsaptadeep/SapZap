@@ -1,24 +1,24 @@
 #!/bin/bash
 set -e
-# build.sh - Setup script for sapzap2 (uses requirements.txt)
+set -o pipefail
 
 echo "Setting up environment for sapzap2 (build.sh)"
 
-# Create virtual environment
+# Create virtual environment (idempotent)
 python -m venv venv
+
+# Activate venv in this shell
 # shellcheck disable=SC1091
 source venv/bin/activate
 
-# Upgrade pip and install from requirements (use requirements.txt so gunicorn is installed)
+# Upgrade pip and install pinned requirements (includes gunicorn)
 python -m pip install --upgrade pip
-pip install -r requirements.txt
+python -m pip install -r requirements.txt
 
 # Ensure temp download directory exists
 mkdir -p temp_downloads
 
-# (Optional) ensure latest yt-dlp installed from PyPI if you want newest fixes
-pip install --upgrade yt-dlp
+# Optional: if you want the absolute newest yt-dlp (uncomment)
+# python -m pip install -U yt-dlp
 
 echo "Setup complete. Activate virtual environment with: source venv/bin/activate"
-
-
