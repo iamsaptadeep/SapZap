@@ -18,3 +18,4 @@ mkdir -p temp_downloads
 pip install --upgrade yt-dlp
 
 echo "Setup complete. Activate virtual environment with: source venv/bin/activate"
+
