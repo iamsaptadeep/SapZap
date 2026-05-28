@@ -113,15 +113,22 @@ st.markdown("""
     align-items: center;
     gap: 8px;
     padding: 10px 12px;
+    min-width: 0;
+    overflow: hidden;
   }
   .post-avatar {
     width: 30px; height: 30px;
     border-radius: 50%;
     object-fit: cover;
   }
-  .post-username { font-size: 0.85rem; font-weight: 600; color: #fff; }
+  .post-username {
+    font-size: 0.85rem; font-weight: 600; color: #fff;
+    flex: 1; min-width: 0;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
   .post-badge {
-    margin-left: auto;
+    flex-shrink: 0;
+    margin-left: 8px;
     font-size: 0.65rem; font-weight: 700;
     letter-spacing: 0.5px;
     text-transform: uppercase;
@@ -139,6 +146,8 @@ st.markdown("""
     color: #ccc;
     line-height: 1.5;
     border-top: 1px solid #1a1a1a;
+    word-break: break-word;
+    overflow-wrap: break-word;
   }
 
   /* ── Media area ── */
@@ -301,13 +310,18 @@ def best_image_url(media) -> str:
 
 def best_video_url(media) -> tuple[str, str]:
     """
-    Return (url, resolution_label) for the highest-quality video.
-    Prefers 1080p (1080x1920 or 1920x1080). Falls back to highest bitrate/width.
+    Return (url, resolution_label) for the best-quality video.
+    Prefers 1080×1920 (portrait reel). Falls back to highest total pixels.
     """
     try:
         versions = getattr(media, "video_versions", None) or []
         if versions:
-            # Sort by width desc, then height desc
+            # Prefer exact 1080×1920 or 1920×1080
+            for v in versions:
+                w, h = v.get("width", 0), v.get("height", 0)
+                if (w == 1080 and h == 1920) or (w == 1920 and h == 1080):
+                    return v["url"], f"{w}×{h}"
+            # Fallback: highest total pixels
             sorted_v = sorted(
                 versions,
                 key=lambda v: (v.get("width", 0) * v.get("height", 0)),
@@ -322,6 +336,41 @@ def best_video_url(media) -> tuple[str, str]:
         pass
     url = str(getattr(media, "video_url", "") or "")
     return url, "HD"
+
+
+def all_video_versions(media) -> list[tuple[str, str, str]]:
+    """
+    Return list of (url, resolution_label, filename) for ALL video versions,
+    sorted best-first (1080×1920 at top, then by descending pixel count).
+    Deduplicates by resolution label.
+    """
+    try:
+        versions = getattr(media, "video_versions", None) or []
+        if not versions:
+            url = str(getattr(media, "video_url", "") or "")
+            return [(url, "HD", "video_HD.mp4")] if url else []
+
+        def sort_key(v):
+            w, h = v.get("width", 0), v.get("height", 0)
+            # Give 1080×1920 and 1920×1080 top priority
+            is_preferred = (w == 1080 and h == 1920) or (w == 1920 and h == 1080)
+            return (1 if is_preferred else 0, w * h)
+
+        sorted_v = sorted(versions, key=sort_key, reverse=True)
+        seen_labels = set()
+        result = []
+        for v in sorted_v:
+            w, h = v.get("width", 0), v.get("height", 0)
+            label = f"{w}×{h}" if w and h else "HD"
+            if label in seen_labels:
+                continue
+            seen_labels.add(label)
+            fname = f"video_{w}x{h}.mp4" if w and h else "video.mp4"
+            result.append((v["url"], label, fname))
+        return result
+    except Exception:
+        url = str(getattr(media, "video_url", "") or "")
+        return [(url, "HD", "video_HD.mp4")] if url else []
 
 
 def fetch_bytes(url: str) -> bytes:
@@ -353,27 +402,40 @@ def is_reel(media) -> bool:
     return media.media_type == 2 and ("reel" in pt or "clips" in pt)
 
 
-def get_all_items(media):
-    """Return list of (label, url, filename, res_label) for all items."""
+def get_all_items(media, include_all_resolutions: bool = False):
+    """Return list of (label, url, filename, res_label) for all items.
+    When include_all_resolutions=True, video items include every available
+    resolution as a separate entry (best first).
+    """
     items = []
     if media.media_type == 8:
         for i, res in enumerate(media.resources):
             if res.media_type == 2:
-                vurl, rlabel = best_video_url(res)
-                if not vurl:
-                    vurl = str(getattr(res, "video_url", "") or "")
-                if vurl:
-                    items.append((f"Video {i+1}", vurl, f"video_{i+1}.mp4", rlabel))
+                if include_all_resolutions:
+                    versions = all_video_versions(res)
+                    for url, rlabel, fname in versions:
+                        items.append((f"Video {i+1} {rlabel}", url, f"video_{i+1}_{fname}", rlabel))
+                else:
+                    vurl, rlabel = best_video_url(res)
+                    if not vurl:
+                        vurl = str(getattr(res, "video_url", "") or "")
+                    if vurl:
+                        items.append((f"Video {i+1}", vurl, f"video_{i+1}.mp4", rlabel))
             else:
                 img_url = best_image_url(res)
                 if img_url:
                     items.append((f"Photo {i+1}", img_url, f"photo_{i+1}.jpg", ""))
     elif media.media_type == 2:
-        vurl, rlabel = best_video_url(media)
-        if not vurl:
-            vurl = str(getattr(media, "video_url", "") or "")
-        if vurl:
-            items.append(("Video", vurl, "video.mp4", rlabel))
+        if include_all_resolutions:
+            versions = all_video_versions(media)
+            for url, rlabel, fname in versions:
+                items.append((f"⬇ {rlabel}", url, fname, rlabel))
+        else:
+            vurl, rlabel = best_video_url(media)
+            if not vurl:
+                vurl = str(getattr(media, "video_url", "") or "")
+            if vurl:
+                items.append(("Video", vurl, "video.mp4", rlabel))
     else:
         img_url = best_image_url(media)
         if img_url:
@@ -434,9 +496,9 @@ def render_carousel(media, key: str):
 
 # ── Post renderer ─────────────────────────────────────────────────────────────
 
-def render_post(media, idx: int, show_reel_aspect: bool = False):
+def render_post(media, idx: int, show_reel_aspect: bool = False, include_all_resolutions: bool = False):
     key = f"post_{idx}_{media.pk}"
-    all_items = get_all_items(media)
+    all_items = get_all_items(media, include_all_resolutions=include_all_resolutions)
     caption = media.caption_text or ""
     label, badge_cls = media_type_label(media)
 
@@ -497,34 +559,54 @@ def render_post(media, idx: int, show_reel_aspect: bool = False):
         except Exception as e:
             st.error(f"Download failed: {e}")
     elif len(all_items) > 1:
-        cols = st.columns(min(len(all_items), 3))
-        for i, (lbl, url, fname, rlabel) in enumerate(all_items):
-            with cols[i % len(cols)]:
+        # For reels with multiple resolutions: stack vertically (one per row on mobile)
+        # For albums/carousels with multiple files: use 2-column grid
+        is_multi_res = include_all_resolutions and media.media_type == 2
+        if is_multi_res:
+            # Resolution options stacked — label shows "Best Quality" for first
+            for i, (lbl, url, fname, rlabel) in enumerate(all_items):
+                display_lbl = f"⬇ Download {rlabel}" + (" ✦ Best" if i == 0 else "")
                 try:
                     data = fetch_bytes(url)
                     st.download_button(
-                        f"⬇ {lbl}",
+                        display_lbl,
                         data=data,
                         file_name=f"{media.pk}_{fname}",
-                        mime="video/mp4" if fname.endswith(".mp4") else "image/jpeg",
+                        mime="video/mp4",
                         key=f"dl_{key}_{i}",
                         use_container_width=True
                     )
                 except Exception:
-                    st.caption(f"❌ {lbl}")
+                    st.caption(f"❌ {rlabel} unavailable")
+        else:
+            cols = st.columns(min(len(all_items), 2))
+            for i, (lbl, url, fname, rlabel) in enumerate(all_items):
+                with cols[i % len(cols)]:
+                    try:
+                        data = fetch_bytes(url)
+                        st.download_button(
+                            f"⬇ {lbl}",
+                            data=data,
+                            file_name=f"{media.pk}_{fname}",
+                            mime="video/mp4" if fname.endswith(".mp4") else "image/jpeg",
+                            key=f"dl_{key}_{i}",
+                            use_container_width=True
+                        )
+                    except Exception:
+                        st.caption(f"❌ {lbl}")
 
-        try:
-            zip_data = make_zip(all_items)
-            st.download_button(
-                "⬇ Download All as ZIP",
-                data=zip_data,
-                file_name=f"{media.pk}_all.zip",
-                mime="application/zip",
-                key=f"dl_{key}_zip",
-                use_container_width=True
-            )
-        except Exception as e:
-            st.error(f"ZIP failed: {e}")
+            try:
+                zip_data = make_zip(all_items)
+                st.download_button(
+                    "⬇ Download All as ZIP",
+                    data=zip_data,
+                    file_name=f"{media.pk}_all.zip",
+                    mime="application/zip",
+                    key=f"dl_{key}_zip",
+                    use_container_width=True
+                )
+            except Exception as e:
+                st.error(f"ZIP failed: {e}")
 
     st.markdown("---")
 
@@ -708,8 +790,11 @@ if st.session_state.get("feed_data") is not None or st.session_state.get("reels_
             st.markdown(f'<p class="section-label">🎬 {len(reels)} Reels · Highest available resolution</p>', unsafe_allow_html=True)
             for i, media in enumerate(reels):
                 try:
-                    render_post(media, i + 10000, show_reel_aspect=True)
+                    render_post(media, i + 10000, show_reel_aspect=True, include_all_resolutions=True)
                 except Exception as e:
                     st.warning(f"Could not render reel {i+1}: {e}")
 
-                
+
+
+
+                    
