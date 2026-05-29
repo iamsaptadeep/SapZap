@@ -3,6 +3,8 @@ import requests
 import zipfile
 import io
 import time
+import contextlib
+from contextlib import nullcontext as contextlib_nullcontext
 from instagrapi import Client
 from instagrapi.exceptions import LoginRequired
 
@@ -301,8 +303,8 @@ def reset_feed_state():
 
 # ── API call helpers ──────────────────────────────────────────────────────────
 
-def api_call(fn, *args, retries=3, base_wait=15, **kwargs):
-    """Retry with exponential back-off on rate-limit errors; propagate LoginRequired."""
+def api_call(fn, *args, retries=2, base_wait=8, **kwargs):
+    """Retry with back-off on rate-limit errors; propagate LoginRequired."""
     for attempt in range(retries):
         try:
             return fn(*args, **kwargs)
@@ -314,9 +316,15 @@ def api_call(fn, *args, retries=3, base_wait=15, **kwargs):
                 "wait a few minutes", "429", "rate", "please wait", "too many"
             ])
             if is_rate and attempt < retries - 1:
-                wait = base_wait * (2 ** attempt)
-                st.toast(f"⏳ Rate limit — waiting {wait}s before retry {attempt + 2}/{retries}…")
-                time.sleep(wait)
+                wait = base_wait * (attempt + 1)   # 8s, 16s — not exponential blowup
+                placeholder = st.empty()
+                for remaining in range(wait, 0, -1):
+                    placeholder.warning(
+                        f"Instagram rate limit — retrying in {remaining}s "
+                        f"(attempt {attempt + 2}/{retries})"
+                    )
+                    time.sleep(1)
+                placeholder.empty()
             else:
                 raise
 
@@ -325,9 +333,19 @@ def api_call(fn, *args, retries=3, base_wait=15, **kwargs):
 
 def best_image_url(media) -> str:
     try:
-        versions = media.image_versions2.get("candidates", [])
-        if versions:
-            return sorted(versions, key=lambda x: x.get("width", 0), reverse=True)[0]["url"]
+        iv2 = getattr(media, "image_versions2", None)
+        if iv2 is not None:
+            # instagrapi returns an ImageVersions2 Pydantic model; access .candidates directly
+            candidates = getattr(iv2, "candidates", None)
+            if candidates is None:
+                # fallback: try dict-style access for raw dicts
+                try:
+                    candidates = iv2.get("candidates", [])
+                except AttributeError:
+                    candidates = []
+            if candidates:
+                return sorted(candidates, key=lambda x: getattr(x, "width", 0) if hasattr(x, "width") else x.get("width", 0), reverse=True)[0].url if hasattr(candidates[0], "url") else \
+                       sorted(candidates, key=lambda x: x.get("width", 0), reverse=True)[0]["url"]
     except Exception:
         pass
     if getattr(media, "thumbnail_url", None):
@@ -337,8 +355,8 @@ def best_image_url(media) -> str:
 
 def all_video_versions(media) -> list:
     """
-    Returns [(url, label, filename), …] sorted by resolution descending.
-    1080p/1920 variants are prioritised first.
+    Returns [(url, label, filename), ...] sorted by resolution descending.
+    Handles both landscape and vertical (reel) orientations.
     """
     try:
         versions = getattr(media, "video_versions", None) or []
@@ -347,21 +365,27 @@ def all_video_versions(media) -> list:
             return [(url, "HD", "video_HD.mp4")] if url else []
 
         def sort_key(v):
-            w, h = v.get("width", 0), v.get("height", 0)
+            w = v.width if hasattr(v, "width") else v.get("width", 0)
+            h = v.height if hasattr(v, "height") else v.get("height", 0)
+            # Use the longer dimension as primary sort (handles portrait reels)
+            long_side = max(w, h)
             pixels = w * h
-            is_fhd = pixels >= (1080 * 1920 * 0.9)   # ≥ ~1MP threshold for Full HD
-            return (1 if is_fhd else 0, pixels)
+            return (long_side, pixels)
 
         sorted_v = sorted(versions, key=sort_key, reverse=True)
         seen, result = set(), []
         for v in sorted_v:
-            w, h = v.get("width", 0), v.get("height", 0)
-            label = f"{w}×{h}" if (w and h) else "HD"
+            w = v.width if hasattr(v, "width") else v.get("width", 0)
+            h = v.height if hasattr(v, "height") else v.get("height", 0)
+            url = str(v.url if hasattr(v, "url") else v.get("url", ""))
+            if not url:
+                continue
+            label = f"{w}x{h}" if (w and h) else "HD"
             if label in seen:
                 continue
             seen.add(label)
             fname = f"video_{w}x{h}.mp4" if (w and h) else "video.mp4"
-            result.append((v["url"], label, fname))
+            result.append((url, label, fname))
         return result
     except Exception:
         url = str(getattr(media, "video_url", "") or "")
@@ -373,13 +397,25 @@ def best_video_url(media) -> tuple:
     return (versions[0][0], versions[0][1]) if versions else ("", "HD")
 
 
-def fetch_bytes(url: str) -> bytes:
-    r = requests.get(url, timeout=90, headers={
-        "User-Agent": "Mozilla/5.0 (Linux; Android 14; SM-S928B) AppleWebKit/537.36",
-        "Referer": "https://www.instagram.com/"
-    })
-    r.raise_for_status()
-    return r.content
+def fetch_bytes(url: str, retries: int = 2) -> bytes:
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Linux; Android 14; SM-S928B) AppleWebKit/537.36 "
+                      "(KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36",
+        "Referer": "https://www.instagram.com/",
+        "Accept": "*/*",
+        "Accept-Language": "en-US,en;q=0.9",
+    }
+    last_err = None
+    for attempt in range(retries):
+        try:
+            r = requests.get(url, timeout=60, headers=headers, stream=False)
+            r.raise_for_status()
+            return r.content
+        except Exception as e:
+            last_err = e
+            if attempt < retries - 1:
+                time.sleep(2)
+    raise last_err
 
 
 def media_type_label(media) -> tuple:
@@ -432,30 +468,51 @@ def get_full_media_cached(cl: Client, pk):
 def render_carousel(media, key: str):
     resources = media.resources
     n         = len(resources)
+    if n == 0:
+        st.caption("No items in album.")
+        return
     sk        = f"carousel_{key}"
     if sk not in st.session_state:
         st.session_state[sk] = 0
-    idx = st.session_state[sk]
+    idx = min(st.session_state[sk], n - 1)   # guard against stale index
     res = resources[idx]
 
     if res.media_type == 2:
         vurl, _ = best_video_url(res)
-        if vurl: st.video(vurl)
+        if vurl:
+            st.video(vurl)
+        else:
+            st.caption("Video unavailable.")
     else:
         img_url = best_image_url(res)
-        if img_url: st.image(img_url, use_container_width=True)
+        if img_url:
+            st.image(img_url, use_container_width=True)
+        else:
+            st.caption("Image unavailable.")
 
     st.markdown(f'<div class="carousel-counter">{idx + 1} / {n}</div>', unsafe_allow_html=True)
     c1, c2 = st.columns(2)
     with c1:
-        if st.button("◀ Prev", key=f"prev_{key}", disabled=(idx == 0), use_container_width=True):
+        if st.button("Prev", key=f"prev_{key}", disabled=(idx == 0), use_container_width=True):
             st.session_state[sk] = max(0, idx - 1); st.rerun()
     with c2:
-        if st.button("Next ▶", key=f"next_{key}", disabled=(idx == n - 1), use_container_width=True):
+        if st.button("Next", key=f"next_{key}", disabled=(idx == n - 1), use_container_width=True):
             st.session_state[sk] = min(n - 1, idx + 1); st.rerun()
 
 
 # ── Download buttons ──────────────────────────────────────────────────────────
+
+def get_cached_bytes(url: str, cache_key: str) -> bytes | None:
+    """Fetch bytes and cache in session_state. Returns None on failure."""
+    if cache_key in st.session_state:
+        return st.session_state[cache_key]
+    try:
+        data = fetch_bytes(url)
+        st.session_state[cache_key] = data
+        return data
+    except Exception:
+        return None
+
 
 def render_download_buttons(media, all_items: list, key: str,
                              is_reel_mode: bool = False, cl: Client = None):
@@ -464,40 +521,40 @@ def render_download_buttons(media, all_items: list, key: str,
         return
 
     if is_reel_mode or media.media_type == 2:
-        # ── Attempt to use cached full-quality version ──────────────────
+        # Use cached full-quality version if available
         cached_full = st.session_state.get(f"full_media_{media.pk}")
         if cached_full:
             all_items = [
-                (f"⬇ {rl}", url, fn, rl)
+                (f"Download {rl}", url, fn, rl)
                 for url, rl, fn in all_video_versions(cached_full)
             ]
 
-        # ── Offer "Fetch Full Quality" when only lower-res is available ──
-        has_hd = any(("1080" in it[3] or "1920" in it[3]) for it in all_items)
-        if cl and not has_hd:
-            fetch_hd_key = f"want_hd_{media.pk}"
+        # Offer "Fetch Full Quality" when no full media cached yet
+        if cl and not cached_full:
             if st.button(
-                "🔍 Fetch Full Quality",
+                "Fetch Highest Quality",
                 key=f"fhd_btn_{key}",
                 use_container_width=True,
             ):
-                with st.spinner("Fetching highest available quality…"):
+                with st.spinner("Fetching highest quality available..."):
                     full = get_full_media_cached(cl, media.pk)
                     if full:
-                        new_items = all_video_versions(full)
-                        if any(v[1] not in [it[3] for it in all_items] for v in new_items):
-                            st.toast("✅ Higher quality found!")
+                        new_versions = all_video_versions(full)
+                        if new_versions:
+                            st.toast("Higher quality available!")
                         else:
-                            st.toast("ℹ️ Already at best available quality.")
+                            st.toast("Already at best available quality.")
                     else:
-                        st.toast("⚠️ Could not fetch quality info.")
+                        st.toast("Could not fetch quality info.")
                 st.rerun()
 
-        # ── Best quality button (always shown) ──────────────────────────
+        # Best quality button
         best_lbl, best_url, best_fn, best_rl = all_items[0]
-        star_label = f"⬇ Download  ·  {best_rl} ⭐ Best"
-        try:
-            data = fetch_bytes(best_url)
+        dl_cache_key = f"dlbytes_{media.pk}_best"
+        star_label = f"Download  {best_rl} (Best)" if best_rl else "Download Video"
+        with st.spinner(f"Preparing {best_rl}...") if dl_cache_key not in st.session_state else contextlib_nullcontext():
+            data = get_cached_bytes(best_url, dl_cache_key)
+        if data:
             st.download_button(
                 star_label, data=data,
                 file_name=f"{media.pk}_{best_fn}",
@@ -505,64 +562,73 @@ def render_download_buttons(media, all_items: list, key: str,
                 key=f"dl_{key}_best",
                 use_container_width=True,
             )
-        except Exception:
-            st.caption(f"❌ {best_rl} unavailable")
+        else:
+            st.caption(f"Could not load {best_rl} — URL may have expired. Re-fetch the post.")
 
-        # ── Other resolutions in expander ────────────────────────────────
+        # Other resolutions in expander
         if len(all_items) > 1:
             with st.expander("More quality options"):
                 for i, (lbl, url, fname, rlabel) in enumerate(all_items[1:], start=1):
-                    try:
-                        data = fetch_bytes(url)
+                    res_cache_key = f"dlbytes_{media.pk}_res{i}"
+                    data = get_cached_bytes(url, res_cache_key)
+                    if data:
                         st.download_button(
-                            f"⬇ {rlabel}", data=data,
+                            f"Download {rlabel}", data=data,
                             file_name=f"{media.pk}_{fname}",
                             mime="video/mp4",
                             key=f"dl_{key}_res{i}",
                             use_container_width=True,
                         )
-                    except Exception:
-                        st.caption(f"❌ {rlabel} unavailable")
+                    else:
+                        st.caption(f"{rlabel} unavailable")
 
     elif len(all_items) == 1:
         lbl, url, fname, rlabel = all_items[0]
-        res_info = f" · {rlabel}" if rlabel else ""
-        try:
-            data = fetch_bytes(url)
+        res_info = f" {rlabel}" if rlabel else ""
+        dl_cache_key = f"dlbytes_{media.pk}_single"
+        data = get_cached_bytes(url, dl_cache_key)
+        if data:
             st.download_button(
-                f"⬇ Download{res_info}", data=data,
+                f"Download{res_info}", data=data,
                 file_name=f"{media.pk}_{fname}",
                 mime="video/mp4" if fname.endswith(".mp4") else "image/jpeg",
                 key=f"dl_{key}_single",
                 use_container_width=True,
             )
-        except Exception as e:
-            st.error(f"Download failed: {e}")
+        else:
+            st.caption("Download unavailable — URL may have expired. Re-fetch the post.")
 
     else:
         # Album — 2-column grid + ZIP
         cols = st.columns(2)
         for i, (lbl, url, fname, rlabel) in enumerate(all_items):
+            dl_cache_key = f"dlbytes_{media.pk}_album{i}"
             with cols[i % 2]:
-                try:
-                    data = fetch_bytes(url)
+                data = get_cached_bytes(url, dl_cache_key)
+                if data:
                     st.download_button(
-                        f"⬇ {lbl}", data=data,
+                        f"Download {lbl}", data=data,
                         file_name=f"{media.pk}_{fname}",
                         mime="video/mp4" if fname.endswith(".mp4") else "image/jpeg",
                         key=f"dl_{key}_{i}",
                         use_container_width=True,
                     )
-                except Exception:
-                    st.caption(f"❌ {lbl}")
-        try:
+                else:
+                    st.caption(f"{lbl} unavailable")
+        # ZIP button
+        zip_cache_key = f"dlbytes_{media.pk}_zip"
+        if zip_cache_key not in st.session_state:
+            try:
+                st.session_state[zip_cache_key] = make_zip(all_items)
+            except Exception as e:
+                st.error(f"ZIP failed: {e}")
+        zip_data = st.session_state.get(zip_cache_key)
+        if zip_data:
             st.download_button(
-                "⬇ Download All as ZIP", data=make_zip(all_items),
+                "Download All as ZIP", data=zip_data,
                 file_name=f"{media.pk}_all.zip", mime="application/zip",
                 key=f"dl_{key}_zip", use_container_width=True,
             )
-        except Exception as e:
-            st.error(f"ZIP failed: {e}")
 
 
 # ── Post / Reel card renderer ─────────────────────────────────────────────────
@@ -599,11 +665,9 @@ def render_post(media, idx: int, show_reel_aspect: bool = False, cl: Client = No
 
     # Card header
     st.markdown(f"""
-    <div class="post-card">
-      <div class="post-header">
-        <span class="post-username">@{username}</span>
-        <span class="post-badge {badge_cls}">{label}</span>
-      </div>
+    <div class="post-header" style="border:1px solid #262626;border-radius:14px 14px 0 0;background:#0a0a0a;margin-bottom:0;">
+      <span class="post-username">@{username}</span>
+      <span class="post-badge {badge_cls}">{label}</span>
     </div>
     """, unsafe_allow_html=True)
 
@@ -978,10 +1042,6 @@ if main_tab == "url":
     render_url_downloader()
 else:
     render_profile_browser()
-
-
-
-
 
 
 
