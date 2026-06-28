@@ -5,6 +5,7 @@ import io
 import time
 import os
 import tempfile
+import hashlib
 from contextlib import nullcontext as contextlib_nullcontext
 import yt_dlp
 from instagrapi import Client
@@ -310,20 +311,94 @@ def _default_session_id() -> str:
     return os.environ.get("IG_SESSIONID", "").strip()
 
 
+def _settings_path(session_id: str) -> str:
+    """Per-session settings file. Keyed by a hash of the sessionid so different
+    accounts don't clobber each other, kept in the system temp dir (writable on
+    Streamlit Cloud)."""
+    digest = hashlib.sha256(session_id.encode()).hexdigest()[:16]
+    return os.path.join(tempfile.gettempdir(), f"sapzap_ig_{digest}.json")
+
+
+def _stable_device(session_id: str) -> dict:
+    """Derive a DETERMINISTIC device/uuid set from the sessionid. This is the core
+    anti-logout fix: instagrapi normally randomizes the device + 4 UUIDs on every
+    Client() construction, so Instagram sees the same account on a 'new phone'
+    every restart and invalidates the session. Seeding from the sessionid makes the
+    fingerprint identical across reruns, redeploys and containers."""
+    seed = hashlib.sha256(("sapzap:" + session_id).encode()).hexdigest()
+
+    def uid(n):  # build a UUID-shaped string deterministically from the seed
+        h = hashlib.sha256(f"{seed}:{n}".encode()).hexdigest()
+        return f"{h[:8]}-{h[8:12]}-{h[12:16]}-{h[16:20]}-{h[20:32]}"
+
+    return {
+        "uuids": {
+            "phone_id": uid("phone"),
+            "uuid": uid("uuid"),
+            "client_session_id": uid("session"),
+            "advertising_id": uid("ad"),
+            "device_id": "android-" + seed[:16],
+        },
+        "device_settings": {
+            "app_version": "269.0.0.18.75",
+            "android_version": 26,
+            "android_release": "8.0.0",
+            "dpi": "480dpi",
+            "resolution": "1080x1920",
+            "manufacturer": "Samsung",
+            "device": "SM-G973F",
+            "model": "beyond1",
+            "cpu": "exynos9820",
+            "version_code": "314665256",
+        },
+        "user_agent": (
+            "Instagram 269.0.0.18.75 Android (26/8.0.0; 480dpi; 1080x1920; "
+            "Samsung; SM-G973F; beyond1; exynos9820; en_US; 314665256)"
+        ),
+        "country": "US",
+        "locale": "en_US",
+    }
+
+
 @st.cache_resource(show_spinner=False)
 def _make_auth_client(session_id: str) -> Client:
     cl = Client()
     cl.delay_range = [2, 4]
+
+    # ANTI-LOGOUT: reuse a persisted device fingerprint if we saved one before,
+    # otherwise seed a deterministic one from the sessionid. Either way the device
+    # + UUIDs stay constant, which is what keeps the session alive.
+    path = _settings_path(session_id)
+    try:
+        if os.path.exists(path):
+            cl.load_settings(path)
+        else:
+            cl.set_settings(_stable_device(session_id))
+    except Exception:
+        try:
+            cl.set_settings(_stable_device(session_id))
+        except Exception:
+            pass
+
+    # login_by_sessionid restores the cookie on TOP of the stable device above.
     cl.login_by_sessionid(session_id)
-    # FIX #2: pin a stable locale/country so Instagram treats the session as a
-    # normal mobile client. Authenticated requests use the private mobile API,
-    # which (unlike the anonymous web API) returns age-restricted / sensitive
-    # content and full-resolution media instead of empty or filtered responses.
+
+    # FIX #2: pin locale/country so IG treats this as a consistent mobile client.
+    # The private mobile API (used once authenticated) returns age-restricted /
+    # sensitive content and full-resolution media the public web API filters out.
     try:
         cl.set_locale("en_US")
         cl.set_country("US")
     except Exception:
         pass
+
+    # Persist the (now logged-in) settings so the next cold start reloads the
+    # exact same device instead of generating a fresh one.
+    try:
+        cl.dump_settings(path)
+    except Exception:
+        pass
+
     return cl
 
 
@@ -400,6 +475,7 @@ def reset_ig_state():
     keys = [
         "ig_resolved_username", "ig_uid", "ig_user",
         "ig_feed_data", "ig_reels_data", "ig_stories_data", "ig_highlights_data",
+        "ig_feed_cursor", "ig_feed_has_more",
         "ig_posts_amount", "ig_reels_amount",
         "ig_posts_has_more", "ig_reels_has_more",
         "ig_post_url", "ig_story_url",
@@ -1171,15 +1247,20 @@ def render_ig_single_story(url: str, cl: Client, is_auth: bool):
 # ── Instagram profile sections ────────────────────────────────────────────────
 
 def render_ig_feed(uname: str, uid, cl: Client, is_auth: bool):
-    amt = st.session_state.get("ig_posts_amount", PAGE_SIZE)
-
+    # FIX (Load More): use cursor-based pagination and APPEND pages. The old code
+    # nulled ig_feed_data and refetched a larger `amount` from scratch — which
+    # both wiped the visible posts and, on any error (rate-limit / gql 400),
+    # left the user with nothing. We now keep an end_cursor and only grow the list.
     if st.session_state.get("ig_feed_data") is None:
         with st.spinner(f"Loading @{uname}'s posts..."):
             try:
-                raw = api_call(cl.user_medias, uid, amount=amt)
-                posts = [m for m in raw if not is_reel(m)]
+                medias, cursor = api_call(
+                    cl.user_medias_paginated, uid, amount=PAGE_SIZE, end_cursor=""
+                )
+                posts = [m for m in medias if not is_reel(m)]
                 st.session_state["ig_feed_data"] = posts
-                st.session_state["ig_posts_has_more"] = len(raw) >= amt
+                st.session_state["ig_feed_cursor"] = cursor or ""
+                st.session_state["ig_feed_has_more"] = bool(cursor)
             except (LoginRequired, ClientLoginRequired):
                 if is_auth:
                     handle_session_expiry()
@@ -1203,37 +1284,62 @@ def render_ig_feed(uname: str, uid, cl: Client, is_auth: bool):
         except Exception as e:
             st.warning(f"Could not render post {i + 1}: {e}")
 
-    if st.session_state.get("ig_posts_has_more", False):
+    if st.session_state.get("ig_feed_has_more", False):
         st.markdown('<div class="load-more-wrap">', unsafe_allow_html=True)
         if st.button(f"Load {PAGE_SIZE} More Posts", use_container_width=True, key="load_more_posts"):
-            st.session_state["ig_posts_amount"] = amt + PAGE_SIZE
-            st.session_state["ig_feed_data"] = None
-            st.rerun()
+            ok = False
+            with st.spinner("Loading more posts..."):
+                try:
+                    cur = st.session_state.get("ig_feed_cursor", "")
+                    medias, new_cur = api_call(
+                        cl.user_medias_paginated, uid, amount=PAGE_SIZE, end_cursor=cur
+                    )
+                    existing = st.session_state.get("ig_feed_data") or []
+                    seen = {m.pk for m in existing}
+                    added = [m for m in medias if not is_reel(m) and m.pk not in seen]
+                    st.session_state["ig_feed_data"] = existing + added
+                    st.session_state["ig_feed_cursor"] = new_cur or ""
+                    # Stop when IG returns no further cursor (end of feed reached).
+                    st.session_state["ig_feed_has_more"] = bool(new_cur)
+                    ok = True
+                except Exception as e:
+                    # Keep already-loaded posts; just report the failure.
+                    st.warning(f"Could not load more posts: {explain_error(e)}")
+            if ok:
+                st.rerun()
         st.markdown('</div>', unsafe_allow_html=True)
     else:
         st.caption("All available posts loaded.")
 
 
-def render_ig_reels(uname: str, uid, cl: Client, is_auth: bool):
-    amt = st.session_state.get("ig_reels_amount", PAGE_SIZE)
+def _fetch_clips(cl: Client, uid, amount: int) -> list:
+    """Reels via user_clips (returns reels directly), falling back to filtering
+    the general feed. Deduped by pk. user_clips has no cursor API, so 'load more'
+    is done by requesting a larger amount (it returns a superset from the start)."""
+    try:
+        reels = api_call(cl.user_clips, uid, amount=amount)
+    except (LoginRequired, ClientLoginRequired, ChallengeRequired,
+            SentryBlock, FeedbackRequired):
+        raise
+    except Exception:
+        medias, _ = api_call(cl.user_medias_paginated, uid, amount=amount, end_cursor="")
+        reels = [m for m in medias if is_reel(m)]
+    seen, uniq = set(), []
+    for r in reels:
+        if r.pk not in seen:
+            uniq.append(r)
+            seen.add(r.pk)
+    return uniq
 
+
+def render_ig_reels(uname: str, uid, cl: Client, is_auth: bool):
     if st.session_state.get("ig_reels_data") is None:
         with st.spinner(f"Loading @{uname}'s reels..."):
             try:
-                try:
-                    reels = api_call(cl.user_clips, uid, amount=amt)
-                except Exception:
-                    raw = api_call(cl.user_medias, uid, amount=amt)
-                    reels = [m for m in raw if is_reel(m)]
-
-                seen, uniq = set(), []
-                for r in reels:
-                    if r.pk not in seen:
-                        uniq.append(r)
-                        seen.add(r.pk)
-
+                uniq = _fetch_clips(cl, uid, PAGE_SIZE)
                 st.session_state["ig_reels_data"] = uniq
-                st.session_state["ig_reels_has_more"] = len(uniq) >= amt
+                st.session_state["ig_reels_amount"] = PAGE_SIZE
+                st.session_state["ig_reels_has_more"] = len(uniq) >= PAGE_SIZE
             except (LoginRequired, ClientLoginRequired):
                 if is_auth:
                     handle_session_expiry()
@@ -1259,9 +1365,25 @@ def render_ig_reels(uname: str, uid, cl: Client, is_auth: bool):
     if st.session_state.get("ig_reels_has_more", False):
         st.markdown('<div class="load-more-wrap">', unsafe_allow_html=True)
         if st.button(f"Load {PAGE_SIZE} More Reels", use_container_width=True, key="load_more_reels"):
-            st.session_state["ig_reels_amount"] = amt + PAGE_SIZE
-            st.session_state["ig_reels_data"] = None
-            st.rerun()
+            # FIX (Load More): fetch a bigger superset, replace ONLY on success, and
+            # never wipe the currently shown reels if the request fails.
+            ok = False
+            new_amt = st.session_state.get("ig_reels_amount", PAGE_SIZE) + PAGE_SIZE
+            prev_count = len(reels)
+            with st.spinner("Loading more reels..."):
+                try:
+                    uniq = _fetch_clips(cl, uid, new_amt)
+                    st.session_state["ig_reels_data"] = uniq
+                    st.session_state["ig_reels_amount"] = new_amt
+                    # More remain only if we actually got new items up to the ask.
+                    st.session_state["ig_reels_has_more"] = (
+                        len(uniq) > prev_count and len(uniq) >= new_amt
+                    )
+                    ok = True
+                except Exception as e:
+                    st.warning(f"Could not load more reels: {explain_error(e)}")
+            if ok:
+                st.rerun()
         st.markdown('</div>', unsafe_allow_html=True)
     else:
         st.caption("All available reels loaded.")
@@ -1271,7 +1393,18 @@ def render_ig_stories(uname: str, uid, cl: Client, is_auth: bool):
     if st.session_state.get("ig_stories_data") is None:
         with st.spinner(f"Loading @{uname}'s stories..."):
             try:
-                stories = api_call(cl.user_stories, uid)
+                # FIX (Stories 400): the anonymous public GraphQL story endpoint
+                # (query_hash 303a4ae..., reel_ids) has been retired by Instagram
+                # and returns "400 Bad Request: invalid request". Go straight to
+                # the private v1 API when authenticated; otherwise tell the user
+                # plainly that stories need a Session ID instead of leaking a 400.
+                if is_auth:
+                    stories = api_call(cl.user_stories_v1, uid)
+                else:
+                    render_auth_notice(uname)
+                    st.info("Stories require a Session ID — Instagram no longer "
+                            "allows anonymous story access.")
+                    return
                 st.session_state["ig_stories_data"] = stories or []
             except (LoginRequired, ClientLoginRequired):
                 if is_auth:
