@@ -1,6 +1,16 @@
+# Core UI
 streamlit>=1.35.0
-instagrapi>=2.1.2
+
+# Instagram private/public API. 2.x targets pydantic v2 and exposes
+# media_info_v1 / user_clips / user_highlights / private_request used by app.py.
+# Pin below 3.0 to avoid an unexpected major-version break on redeploy.
+instagrapi>=2.1.2,<3.0.0
+
+# HTTP + image handling (Pillow is required by st.image and instagrapi)
 requests>=2.31.0
 Pillow>=10.0.0
+
+# YouTube / Shorts downloading; imageio-ffmpeg bundles an ffmpeg binary so
+# yt-dlp can merge bestvideo+bestaudio on Streamlit Cloud (no system ffmpeg).
 yt-dlp>=2024.1.0
 imageio-ffmpeg>=0.5.0

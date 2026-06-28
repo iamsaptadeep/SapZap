@@ -8,7 +8,21 @@ import tempfile
 from contextlib import nullcontext as contextlib_nullcontext
 import yt_dlp
 from instagrapi import Client
-from instagrapi.exceptions import LoginRequired
+# FIX #2: import the full set of auth / anti-bot exceptions so we can react to
+# each one with a clear, user-facing message instead of a generic failure.
+from instagrapi.exceptions import (
+    LoginRequired,
+    ClientLoginRequired,
+    ChallengeRequired,
+    SentryBlock,
+    FeedbackRequired,
+    PleaseWaitFewMinutes,
+    RateLimitError,
+    PrivateAccount,
+    UserNotFound,
+    MediaNotFound,
+    ClientError,
+)
 
 PAGE_SIZE = 20
 
@@ -281,11 +295,35 @@ st.markdown("""
 
 # ── Client management ─────────────────────────────────────────────────────────
 
+def _default_session_id() -> str:
+    """FIX #2/#6: allow a sessionid to be provisioned via Streamlit secrets
+    (`.streamlit/secrets.toml` → IG_SESSIONID) or an environment variable, so the
+    deployed app is authenticated automatically without anyone pasting a cookie.
+    Credentials are NEVER hardcoded — they come only from secrets/env."""
+    try:
+        val = st.secrets.get("IG_SESSIONID", "")  # available on Streamlit Cloud
+        if val:
+            return str(val).strip()
+    except Exception:
+        # st.secrets raises if no secrets file exists locally — that's fine.
+        pass
+    return os.environ.get("IG_SESSIONID", "").strip()
+
+
 @st.cache_resource(show_spinner=False)
 def _make_auth_client(session_id: str) -> Client:
     cl = Client()
     cl.delay_range = [2, 4]
     cl.login_by_sessionid(session_id)
+    # FIX #2: pin a stable locale/country so Instagram treats the session as a
+    # normal mobile client. Authenticated requests use the private mobile API,
+    # which (unlike the anonymous web API) returns age-restricted / sensitive
+    # content and full-resolution media instead of empty or filtered responses.
+    try:
+        cl.set_locale("en_US")
+        cl.set_country("US")
+    except Exception:
+        pass
     return cl
 
 
@@ -298,13 +336,46 @@ def _make_anon_client() -> Client:
 
 def get_cl() -> tuple:
     """Returns (Client, is_authenticated)."""
-    sid = st.session_state.get("session_id", "")
+    # FIX #2/#6: fall back to a secrets/env-provided sessionid when the user has
+    # not pasted one in this session, so the app stays authenticated in production.
+    sid = st.session_state.get("session_id", "") or _default_session_id()
     if sid:
         try:
             return _make_auth_client(sid), True
         except Exception:
+            # Bad/expired sessionid → degrade to anonymous instead of crashing.
             pass
     return _make_anon_client(), False
+
+
+def explain_error(e: Exception) -> str:
+    """FIX #2/#5: map instagrapi exceptions to clear, actionable user messages."""
+    s = str(e)
+    if isinstance(e, ChallengeRequired):
+        return ("Instagram flagged this session with a security challenge. Open "
+                "instagram.com in a browser, clear the checkpoint, then paste a "
+                "fresh sessionid.")
+    if isinstance(e, SentryBlock):
+        return ("Instagram temporarily blocked automated access (SentryBlock). "
+                "Wait a while or switch to a different sessionid.")
+    if isinstance(e, FeedbackRequired):
+        return ("Instagram rate-limited this action (feedback_required). Wait a "
+                "few minutes before trying again.")
+    if isinstance(e, (PleaseWaitFewMinutes, RateLimitError)):
+        return "Instagram rate limit hit. Please wait 2-5 minutes and try again."
+    if isinstance(e, PrivateAccount):
+        return ("This is a private account. Use a sessionid that already follows "
+                "it to view its media.")
+    if isinstance(e, UserNotFound):
+        return "No Instagram account exists with that username."
+    if isinstance(e, MediaNotFound):
+        return "That media could not be found — it may have been deleted or made private."
+    low = s.lower()
+    if "wait a few minutes" in low or "please wait" in low:
+        return "Instagram rate limit hit. Please wait 2-5 minutes and try again."
+    if "login_required" in low or "login required" in low:
+        return "Login required. Paste a valid sessionid in the Session ID panel above."
+    return f"Could not complete the request: {s}"
 
 
 def handle_session_expiry():
@@ -328,7 +399,7 @@ def reset_ig_state():
     """Clear profile/post data but keep session and tab selection."""
     keys = [
         "ig_resolved_username", "ig_uid", "ig_user",
-        "ig_feed_data", "ig_reels_data", "ig_stories_data",
+        "ig_feed_data", "ig_reels_data", "ig_stories_data", "ig_highlights_data",
         "ig_posts_amount", "ig_reels_amount",
         "ig_posts_has_more", "ig_reels_has_more",
         "ig_post_url", "ig_story_url",
@@ -336,7 +407,7 @@ def reset_ig_state():
     for k in keys:
         st.session_state.pop(k, None)
     for k in list(st.session_state.keys()):
-        if k.startswith(("full_media_", "carousel_", "dlbytes_")):
+        if k.startswith(("full_media_", "carousel_", "dlbytes_", "rawvv_", "hl_items_")):
             del st.session_state[k]
 
 
@@ -346,8 +417,25 @@ def api_call(fn, *args, retries=2, base_wait=8, **kwargs):
     for attempt in range(retries):
         try:
             return fn(*args, **kwargs)
-        except LoginRequired:
+        # FIX #2: auth / anti-bot failures are not transient — retrying just burns
+        # the rate budget. Re-raise immediately so the caller shows the right
+        # message (LoginRequired → re-auth, ChallengeRequired/SentryBlock → blocked).
+        except (LoginRequired, ClientLoginRequired, ChallengeRequired,
+                SentryBlock, FeedbackRequired):
             raise
+        except (PleaseWaitFewMinutes, RateLimitError) as e:
+            if attempt < retries - 1:
+                wait = base_wait * (attempt + 1)
+                placeholder = st.empty()
+                for remaining in range(wait, 0, -1):
+                    placeholder.warning(
+                        f"Instagram rate limit — retrying in {remaining}s "
+                        f"(attempt {attempt + 2}/{retries})"
+                    )
+                    time.sleep(1)
+                placeholder.empty()
+            else:
+                raise
         except Exception as e:
             msg = str(e).lower()
             is_rate = any(k in msg for k in [
@@ -429,6 +517,72 @@ def best_video_url(media) -> tuple:
     return (versions[0][0], versions[0][1]) if versions else ("", "HD")
 
 
+def video_items_from_raw(raw_versions: list) -> list:
+    """FIX #1: convert the RAW `video_versions` array → [(url, label, fname), ...]
+    sorted by resolution (width*height) descending, so index 0 is always the
+    highest available (e.g. 1080x1920). The typed instagrapi Media object drops
+    this array and keeps only a single `video_url`, which is why the previous
+    multi-resolution UI never appeared — we reconstruct it from the raw item."""
+    out, seen = [], set()
+
+    def res(v):
+        return int(v.get("width") or 0), int(v.get("height") or 0)
+
+    # max(w, h) first (portrait reels report height as the long edge), then area.
+    for v in sorted(raw_versions, key=lambda v: (max(res(v)), res(v)[0] * res(v)[1]),
+                    reverse=True):
+        w, h = res(v)
+        url = str(v.get("url") or "")
+        if not url:
+            continue
+        label = f"{w}x{h}" if (w and h) else "HD"
+        if label in seen:
+            continue
+        seen.add(label)
+        fname = f"video_{w}x{h}.mp4" if (w and h) else "video.mp4"
+        out.append((url, label, fname))
+    return out
+
+
+def fetch_raw_video_versions(cl: Client, pk) -> list:
+    """FIX #1/#2: pull the full resolution ladder for a video/reel directly from
+    the private mobile API. Requires authentication; the anonymous web API does
+    not expose the 1080p version. Cached per-pk in session_state to avoid extra
+    requests (and to stay under Instagram's rate limit)."""
+    key = f"rawvv_{pk}"
+    if key in st.session_state:
+        return st.session_state[key]
+    versions = []
+    try:
+        # Same endpoint instagrapi's own media_info_v1 uses, but we keep the raw
+        # dict so the width/height-bearing `video_versions` survive extraction.
+        result = api_call(cl.private_request, f"media/{pk}/info/")
+        items = (result or {}).get("items") or []
+        if items:
+            versions = items[0].get("video_versions") or []
+    except Exception:
+        versions = []
+    st.session_state[key] = versions
+    return versions
+
+
+def fetch_media_best(cl: Client, pk, is_auth: bool):
+    """FIX #1/#2: when authenticated, fetch media via the PRIVATE v1 API
+    (media_info_v1) instead of the default media_info, which tries the public
+    GraphQL endpoint first. The private API returns full-resolution and
+    age-restricted/sensitive media that the public endpoint filters or rejects."""
+    if is_auth:
+        try:
+            return api_call(cl.media_info_v1, pk)
+        except (LoginRequired, ClientLoginRequired, ChallengeRequired,
+                SentryBlock, FeedbackRequired):
+            raise
+        except Exception:
+            # Fall through to the default resolver on unexpected v1 failures.
+            pass
+    return api_call(cl.media_info, pk)
+
+
 def fetch_bytes(url: str, retries: int = 2) -> bytes:
     headers = {
         "User-Agent": "Mozilla/5.0 (Linux; Android 14; SM-S928B) AppleWebKit/537.36 "
@@ -481,18 +635,6 @@ def make_zip(items: list) -> bytes:
     return buf.read()
 
 
-def get_full_media_cached(cl: Client, pk):
-    cache_key = f"full_media_{pk}"
-    if cache_key in st.session_state:
-        return st.session_state[cache_key]
-    try:
-        media = api_call(cl.media_info, pk)
-        st.session_state[cache_key] = media
-        return media
-    except Exception:
-        return None
-
-
 def get_cached_bytes(url: str, cache_key: str):
     if cache_key in st.session_state:
         return st.session_state[cache_key]
@@ -509,9 +651,15 @@ def get_cached_bytes(url: str, cache_key: str):
 def detect_input_type(text: str) -> str:
     t = text.strip()
     if "instagram.com" in t:
+        # FIX #4: highlight story URLs look like /stories/highlights/<id>/ — those
+        # still resolve via story_pk_from_url, so keep them under story_url.
         if "/stories/" in t:
             return "story_url"
-        if "/p/" in t or "/reel/" in t or "/tv/" in t:
+        # FIX #4: accept singular and plural reel paths plus /tv/ (IGTV) and /p/.
+        if any(seg in t for seg in ("/p/", "/reel/", "/reels/", "/tv/")):
+            return "post_url"
+        # /share/ links redirect to a post; instagrapi follows them, treat as post.
+        if "/share/" in t:
             return "post_url"
         return "profile_url"
     if t:
@@ -579,22 +727,27 @@ def render_download_buttons(media, all_items: list, key: str,
         return
 
     if is_reel_mode or media.media_type == 2:
-        cached_full = st.session_state.get(f"full_media_{media.pk}")
-        if cached_full:
-            all_items = [
-                (f"Download {rl}", url, fn, rl)
-                for url, rl, fn in all_video_versions(cached_full)
-            ]
+        # FIX #1: prefer the RAW resolution ladder (1080p included) when we have
+        # fetched it. The typed object only carries a single video_url, so without
+        # this the user could never reach the highest version.
+        raw_vv = st.session_state.get(f"rawvv_{media.pk}")
+        if raw_vv:
+            items = video_items_from_raw(raw_vv)
+            if items:
+                all_items = [
+                    (f"Download {rl}", url, fn, rl) for url, rl, fn in items
+                ]
 
-        if cl and not cached_full:
+        # Offer an on-demand fetch of the full ladder (one private request per
+        # item — gated behind a button so a 20-reel feed doesn't hammer the API).
+        if cl and raw_vv is None:
             if st.button("Fetch Highest Quality", key=f"fhd_btn_{key}", use_container_width=True):
                 with st.spinner("Fetching highest quality..."):
-                    full = get_full_media_cached(cl, media.pk)
-                    if full:
-                        new_v = all_video_versions(full)
-                        st.toast("Higher quality available." if new_v else "Already at best quality.")
-                    else:
-                        st.toast("Could not fetch quality info.")
+                    vv = fetch_raw_video_versions(cl, media.pk)
+                if vv:
+                    st.toast(f"{len(video_items_from_raw(vv))} quality option(s) found.")
+                else:
+                    st.toast("No higher resolution available (login may be required).")
                 st.rerun()
 
         if not all_items:
@@ -690,13 +843,20 @@ def render_post(media, idx: int, show_reel_aspect: bool = False, cl: Client = No
     username = media.user.username if media.user else "unknown"
     caption = media.caption_text or ""
 
-    display_media = st.session_state.get(f"full_media_{media.pk}", media)
+    # FIX #1: if the raw resolution ladder was fetched for this video, seed
+    # all_items from it (highest first); otherwise fall back to the single
+    # typed video_url. render_download_buttons applies the same preference.
+    raw_vv = st.session_state.get(f"rawvv_{media.pk}")
 
     if is_vid:
-        all_items = [
-            (f"Download {rl}", url, fn, rl)
-            for url, rl, fn in all_video_versions(display_media)
-        ]
+        if raw_vv:
+            items = video_items_from_raw(raw_vv)
+            all_items = [(f"Download {rl}", url, fn, rl) for url, rl, fn in items]
+        else:
+            all_items = [
+                (f"Download {rl}", url, fn, rl)
+                for url, rl, fn in all_video_versions(media)
+            ]
     elif media.media_type == 8:
         all_items = []
         for i, res in enumerate(media.resources):
@@ -722,9 +882,10 @@ def render_post(media, idx: int, show_reel_aspect: bool = False, cl: Client = No
     if media.media_type == 8:
         render_carousel(media, key)
     elif is_vid:
-        vurl, res_label = best_video_url(display_media)
-        if not vurl:
-            vurl = str(getattr(media, "video_url", "") or "")
+        # Preview the single video_url; the highest-res label comes from the raw
+        # ladder when available, else stays generic.
+        vurl = str(getattr(media, "video_url", "") or "")
+        res_label = all_items[0][3] if all_items else ""
         if vurl:
             if show_reel_aspect:
                 st.markdown('<div class="reel-wrap">', unsafe_allow_html=True)
@@ -961,22 +1122,27 @@ def render_auth_notice(uname: str = ""):
 # ── Instagram single-item renders ─────────────────────────────────────────────
 
 def render_ig_single_post(url: str, cl: Client, is_auth: bool):
+    # FIX #4: media_pk_from_url handles /p/, /reel/, /reels/ and /tv/ URLs.
     with st.spinner("Fetching media..."):
         try:
             pk = api_call(cl.media_pk_from_url, url)
-            media = api_call(cl.media_info, pk)
-        except LoginRequired:
+            # FIX #1/#2: authenticated → private v1 API for full-res & sensitive media.
+            media = fetch_media_best(cl, pk, is_auth)
+            # FIX #1: a single item is cheap, so pull the full resolution ladder
+            # up front when authenticated → the 1080p option is offered immediately.
+            if is_auth and media.media_type == 2:
+                fetch_raw_video_versions(cl, pk)
+        except (LoginRequired, ClientLoginRequired):
             if is_auth:
                 handle_session_expiry()
             else:
                 render_auth_notice()
             return
+        except (ChallengeRequired, SentryBlock, FeedbackRequired) as e:
+            st.error(explain_error(e))
+            return
         except Exception as e:
-            err = str(e)
-            if "wait a few minutes" in err.lower() or "please wait" in err.lower():
-                st.error("Rate limited. Please wait 2-5 minutes and try again.")
-            else:
-                st.error(f"Could not fetch media: {err}")
+            st.error(explain_error(e))
             return
     render_post(media, idx=99999, show_reel_aspect=is_reel(media), cl=cl)
 
@@ -986,15 +1152,18 @@ def render_ig_single_story(url: str, cl: Client, is_auth: bool):
         try:
             pk = api_call(cl.story_pk_from_url, url)
             story = api_call(cl.story_info, pk)
-        except LoginRequired:
+        except (LoginRequired, ClientLoginRequired):
             if is_auth:
                 handle_session_expiry()
             else:
                 render_auth_notice()
                 st.info("Stories require a Session ID — Instagram restricts story access to logged-in users.")
             return
+        except (ChallengeRequired, SentryBlock, FeedbackRequired) as e:
+            st.error(explain_error(e))
+            return
         except Exception as e:
-            st.error(f"Could not fetch story: {e}")
+            st.error(explain_error(e))
             return
     render_story(story, idx=0)
 
@@ -1011,14 +1180,15 @@ def render_ig_feed(uname: str, uid, cl: Client, is_auth: bool):
                 posts = [m for m in raw if not is_reel(m)]
                 st.session_state["ig_feed_data"] = posts
                 st.session_state["ig_posts_has_more"] = len(raw) >= amt
-            except LoginRequired:
+            except (LoginRequired, ClientLoginRequired):
                 if is_auth:
                     handle_session_expiry()
                 else:
                     render_auth_notice(uname)
                 return
             except Exception as e:
-                st.error(f"Could not load posts: {e}")
+                # FIX #2/#5: clear message for challenge/sentry/rate-limit/private.
+                st.error(explain_error(e))
                 return
 
     posts = st.session_state.get("ig_feed_data") or []
@@ -1064,14 +1234,14 @@ def render_ig_reels(uname: str, uid, cl: Client, is_auth: bool):
 
                 st.session_state["ig_reels_data"] = uniq
                 st.session_state["ig_reels_has_more"] = len(uniq) >= amt
-            except LoginRequired:
+            except (LoginRequired, ClientLoginRequired):
                 if is_auth:
                     handle_session_expiry()
                 else:
                     render_auth_notice(uname)
                 return
             except Exception as e:
-                st.error(f"Could not load reels: {e}")
+                st.error(explain_error(e))
                 return
 
     reels = st.session_state.get("ig_reels_data") or []
@@ -1103,7 +1273,7 @@ def render_ig_stories(uname: str, uid, cl: Client, is_auth: bool):
             try:
                 stories = api_call(cl.user_stories, uid)
                 st.session_state["ig_stories_data"] = stories or []
-            except LoginRequired:
+            except (LoginRequired, ClientLoginRequired):
                 if is_auth:
                     handle_session_expiry()
                 else:
@@ -1111,7 +1281,7 @@ def render_ig_stories(uname: str, uid, cl: Client, is_auth: bool):
                     st.info("Stories require a Session ID — Instagram limits story access to logged-in users.")
                 return
             except Exception as e:
-                st.error(f"Could not load stories: {e}")
+                st.error(explain_error(e))
                 return
 
     stories = st.session_state.get("ig_stories_data") or []
@@ -1127,6 +1297,60 @@ def render_ig_stories(uname: str, uid, cl: Client, is_auth: bool):
             st.warning(f"Could not render story {i + 1}: {e}")
 
 
+def render_ig_highlights(uname: str, uid, cl: Client, is_auth: bool):
+    # FIX #3: highlights complete the "full profile scrape" (posts/reels/stories/
+    # highlights). They almost always require authentication.
+    if st.session_state.get("ig_highlights_data") is None:
+        with st.spinner(f"Loading @{uname}'s highlights..."):
+            try:
+                hls = api_call(cl.user_highlights, uid)
+                st.session_state["ig_highlights_data"] = hls or []
+            except (LoginRequired, ClientLoginRequired):
+                if is_auth:
+                    handle_session_expiry()
+                else:
+                    render_auth_notice(uname)
+                    st.info("Highlights usually require a Session ID to access.")
+                return
+            except Exception as e:
+                st.error(explain_error(e))
+                return
+
+    hls = st.session_state.get("ig_highlights_data") or []
+    if not hls:
+        st.info("No highlights found for this account.")
+        return
+
+    st.markdown(f'<p class="section-label">{len(hls)} highlights</p>', unsafe_allow_html=True)
+    for h in hls:
+        title = getattr(h, "title", "Highlight") or "Highlight"
+        count = getattr(h, "media_count", None)
+        head = f"{title}  ·  {count} items" if count else title
+        with st.expander(head):
+            # Highlight items are loaded lazily (one private request each) to keep
+            # the initial highlights listing cheap and rate-limit friendly.
+            items_key = f"hl_items_{h.pk}"
+            if items_key not in st.session_state:
+                if st.button("Load items", key=f"hl_load_{h.pk}", use_container_width=True):
+                    with st.spinner("Loading highlight..."):
+                        try:
+                            info = api_call(cl.highlight_info, h.pk)
+                            st.session_state[items_key] = list(getattr(info, "items", []) or [])
+                        except Exception as e:
+                            st.error(explain_error(e))
+                    st.rerun()
+            else:
+                items = st.session_state[items_key]
+                if not items:
+                    st.caption("No items in this highlight.")
+                for j, item in enumerate(items):
+                    # Highlight items are Story objects — reuse the story renderer.
+                    try:
+                        render_story(item, f"{h.pk}_{j}")
+                    except Exception as e:
+                        st.warning(f"Could not render item {j + 1}: {e}")
+
+
 # ── Instagram tab ─────────────────────────────────────────────────────────────
 
 def render_instagram_tab():
@@ -1137,6 +1361,11 @@ def render_instagram_tab():
         "Session ID",
         expanded=False,
     ):
+        # FIX #2: surface the live auth state (incl. a secrets/env-provisioned session).
+        if is_auth:
+            st.caption("✅ Authenticated — private, age-restricted & full-resolution media available.")
+        else:
+            st.caption("⚪ Anonymous — only public posts/reels; lower resolution.")
         session_input = st.text_input(
             "Instagram Session ID",
             type="password",
@@ -1171,32 +1400,26 @@ def render_instagram_tab():
 
     st.markdown("---")
 
-    # Sub-tab navigation: Feed | Reels | Stories
+    # Sub-tab navigation: Feed | Reels | Stories | Highlights (2x2 grid for mobile)
     ig_sub = st.session_state.get("ig_sub_tab", "feed")
-    c1, c2, c3 = st.columns(3)
-    with c1:
-        if st.button("Feed", key="sub_feed",
-                     type="primary" if ig_sub == "feed" else "secondary",
-                     use_container_width=True):
-            st.session_state["ig_sub_tab"] = "feed"
-            st.rerun()
-    with c2:
-        if st.button("Reels", key="sub_reels",
-                     type="primary" if ig_sub == "reels" else "secondary",
-                     use_container_width=True):
-            st.session_state["ig_sub_tab"] = "reels"
-            st.rerun()
-    with c3:
-        if st.button("Stories", key="sub_stories",
-                     type="primary" if ig_sub == "stories" else "secondary",
-                     use_container_width=True):
-            st.session_state["ig_sub_tab"] = "stories"
-            st.rerun()
+    sub_tabs = [("Feed", "feed"), ("Reels", "reels"),
+                ("Stories", "stories"), ("Highlights", "highlights")]
+    row1 = st.columns(2)
+    row2 = st.columns(2)
+    cells = [row1[0], row1[1], row2[0], row2[1]]
+    for (label, value), cell in zip(sub_tabs, cells):
+        with cell:
+            if st.button(label, key=f"sub_{value}",
+                         type="primary" if ig_sub == value else "secondary",
+                         use_container_width=True):
+                st.session_state["ig_sub_tab"] = value
+                st.rerun()
 
     placeholder_map = {
         "feed": "Username, profile URL, or post URL",
         "reels": "Username, profile URL, or reel URL",
         "stories": "Username, profile URL, or story URL",
+        "highlights": "Username or profile URL",
     }
 
     raw_input = st.text_input(
@@ -1259,14 +1482,14 @@ def render_instagram_tab():
                 user = api_call(cl.user_info_by_username, uname)
                 st.session_state["ig_user"] = user
                 st.session_state["ig_uid"] = user.pk
-            except LoginRequired:
+            except (LoginRequired, ClientLoginRequired):
                 if is_auth:
                     handle_session_expiry()
                 else:
                     render_auth_notice(uname)
                 return
             except Exception as e:
-                st.error(f"Could not look up @{uname}: {e}")
+                st.error(explain_error(e))
                 return
 
     uid = st.session_state["ig_uid"]
@@ -1280,8 +1503,18 @@ def render_instagram_tab():
             if pic:
                 st.image(pic, width=64)
         with c2:
-            st.markdown(f"**@{user.username}**")
+            lock = " 🔒" if getattr(user, "is_private", False) else ""
+            st.markdown(f"**@{user.username}**{lock}")
             st.caption(f"{user.media_count:,} posts  ·  {user.follower_count:,} followers")
+
+        # FIX #3: private-account detection with a clear, actionable message.
+        # Posts of a private account are only visible to an authenticated session
+        # that follows it — warn instead of silently returning empty results.
+        if getattr(user, "is_private", False) and not is_auth:
+            st.warning(
+                "This is a private account. Open the Session ID panel and paste a "
+                "sessionid from an account that follows it to view its media."
+            )
         st.markdown("---")
 
     if ig_sub == "feed":
@@ -1290,6 +1523,8 @@ def render_instagram_tab():
         render_ig_reels(uname, uid, cl, is_auth)
     elif ig_sub == "stories":
         render_ig_stories(uname, uid, cl, is_auth)
+    elif ig_sub == "highlights":
+        render_ig_highlights(uname, uid, cl, is_auth)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

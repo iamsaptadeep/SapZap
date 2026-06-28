@@ -18,6 +18,18 @@ streamlit run app.py
 
 That's it. Free, always-on, mobile-accessible via the generated URL.
 
+## Authentication (recommended for full quality & restricted content)
+
+Anonymous use only reaches public, lower-resolution media. For 1080×1920 reels,
+age-restricted/sensitive accounts, private accounts you follow, stories, and
+highlights, provide a Session ID one of two ways:
+
+- **Per-session (UI):** paste it into the **Session ID** panel in the app.
+- **App-wide (deploy):** set `IG_SESSIONID` in Streamlit Cloud **Secrets** (or a
+  local `.streamlit/secrets.toml` — see `secrets.toml.example`) or as an
+  environment variable. The app picks it up automatically; credentials are never
+  hardcoded.
+
 ## Getting Your Session ID
 
 1. Open [instagram.com](https://instagram.com) in desktop Chrome
